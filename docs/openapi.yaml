@@ -1,0 +1,561 @@
+openapi: 3.1.0
+info:
+  title: Polarkast Game Provider API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Seamless-wallet API between Polarkast (the game studio) and an operator (the casino). This file is the single
+    source of truth; where code, docs or tests disagree with it, they are wrong.
+
+    Two sides, two tags:
+    - `studio`: hosted by Polarkast. The operator calls it. Only `POST /v1/launch`.
+    - `wallet`: hosted by the operator at a base URL the operator configures with Polarkast. Polarkast calls it.
+      Paths below are relative to that base URL (for example `https://wallet.operator.example` plus `/wallet/bet`).
+
+    ## Transport
+    - HTTPS only. Every request and response body is `application/json` (UTF-8). Every operation is `POST`.
+    - Unknown request fields are ignored. Missing required fields, wrong types or out-of-range values are `INVALID_REQUEST`.
+    - A successful call is HTTP 200 with the documented body. Any failure is an error body (see Errors).
+
+    ## Money
+    - An amount is an integer in minor units (`amount`), always with a `currency` and an integer `precision`
+      (number of decimal places). Real value = `amount / 10^precision`. Example: `amount 1050`, `currency EUR`,
+      `precision 2` is 10.50 EUR. Floats, decimals and strings are never used for money.
+    - `currency` is an opaque string, 1 to 16 characters from `A-Z0-9_` (for example `EUR`, `BTC`, `GC`, `SC`). Polarkast
+      does not interpret it. Sweepstakes play coins and prize coins are simply two different currency codes; the API has
+      no sweepstakes-specific fields.
+    - Amounts are int64 and never exceed 2^53-1 (9007199254740991), so JSON numbers stay exact in every language.
+      A value above that is `INVALID_REQUEST`.
+    - A player session has exactly one currency and one precision, fixed by `/wallet/authenticate`. Every later money
+      call must repeat that currency and precision exactly, otherwise `CURRENCY_MISMATCH`.
+
+    ## Identifiers
+    `transaction_id`, `round_id`, `player_id`, `game_id` and `session_token` are strings of 1 to 128 characters from
+    `A-Za-z0-9_-.:`. Polarkast generates `transaction_id` and `round_id` (UUIDs); the operator generates `player_id`
+    and `session_token`.
+
+    ## Signing (both directions, every request)
+    Every request, from either side, carries the header `X-Signature`: the lowercase hex encoding (64 characters) of
+    HMAC-SHA256 computed over the exact raw bytes of the HTTP request body, keyed with the per-operator shared secret
+    (the secret's UTF-8 bytes, used as-is). Nothing else is signed: not the path, headers or query. The receiver
+    computes the HMAC over the raw bytes it received (before any JSON parsing), compares it in constant time, and
+    rejects a mismatch with `INVALID_SIGNATURE` before doing anything else. Responses are not signed.
+    Requests to `/v1/launch` also carry `X-Operator-Id` (issued by Polarkast) so the secret can be found.
+
+    ## Idempotency
+    Every money call (`bet`, `win`, `rollback`) is identified by its `transaction_id`, unique per operator across all
+    three call types (one namespace).
+    - The first call with an id is executed and its response stored.
+    - Repeating a call with the same `transaction_id` and the same body (every field has the same value) returns the
+      original response (same HTTP status, same body, so the same `balance` as originally returned) and moves no money.
+      This holds for every definitive error response too (for example `INVALID_SESSION`, `INSUFFICIENT_FUNDS`,
+      `CURRENCY_MISMATCH`): it is stored and replayed unchanged, even if the
+      balance or session has changed since. Only `INTERNAL_ERROR` is never stored.
+    - The same `transaction_id` with any field different, or used by a different call type, returns `TRANSACTION_MISMATCH`
+      and moves no money.
+    - Rollback references the bet's `transaction_id` in `bet_transaction_id`. A rollback for a bet the operator has never
+      seen succeeds, moves no money, and is recorded; a bet arriving later with that id is rejected with
+      `TRANSACTION_ROLLED_BACK`. A bet that was rolled back stays rolled back: replaying it, even with the same
+      body, returns `TRANSACTION_ROLLED_BACK` and not the stored response. Order of evaluation for a known or
+      rolled-back id: `TRANSACTION_MISMATCH` first, then `TRANSACTION_ROLLED_BACK`, then the stored response.
+
+    ## Win and rollback checks (session, player)
+    `win` and `rollback` never check the session token for validity or expiry: an unknown, expired or other player's
+    token is accepted, and `INVALID_SESSION` is never returned for them. The token must still be a well-formed `Id`
+    (a malformed one is `INVALID_REQUEST`). What is checked instead:
+    - An unknown `player_id` is `INVALID_REQUEST` (HTTP 400); nothing moves.
+    - A `rollback` whose `bet_transaction_id` is a bet of another player is `INVALID_REQUEST` (HTTP 400); nothing
+      moves and the bet is not marked rolled back.
+
+    ## Timeouts and retries (Polarkast as caller)
+    - Request timeout: 5 seconds per attempt (connect plus response). Operators should answer in under 2 seconds.
+    - Retryable failures: a timeout, a connection error, HTTP 502, 503 or 504, or an error body with code
+      `INTERNAL_ERROR`. Everything else is definitive and is never retried.
+    - `/wallet/authenticate` and `/wallet/balance` are not retried; the failure is returned to the caller.
+    - `/wallet/bet` is never retried. On a retryable failure Polarkast treats the bet as unknown and sends
+      `/wallet/rollback` for it, then ends the round without play. A definitive error (for example
+      `INSUFFICIENT_FUNDS`) needs no rollback.
+    - `/wallet/win` and `/wallet/rollback` are retried with the same `transaction_id` and the same body until a
+      definitive response (HTTP 200 or a non-retryable error). Backoff: wait 1, 2, 4, 8, 16 seconds, then 30 seconds
+      between attempts, for up to 24 hours; after that the transaction is flagged for manual reconciliation. The
+      operator must keep accepting `win` and `rollback` for a round even after the session token expired or the
+      player disconnected.
+    - A late duplicate is harmless because of the idempotency rule; operators must make it so.
+
+    ## Errors
+    Every failure, on every endpoint, has the same body: `{"error": {"code": "...", "message": "..."}}` with a code
+    from the closed list in `ErrorCode`. `message` is for humans and may change; code and HTTP status are the contract.
+  contact:
+    name: Polarkast integrations
+    url: https://github.com/Polarkast/integration
+servers:
+  - url: https://api.polarkast.example
+    description: Studio (placeholder host). Used by `studio` operations only.
+  - url: https://wallet.operator.example
+    description: Operator wallet (placeholder host; the real base URL is configured per operator). Used by `wallet` operations only.
+security:
+  - HmacSignature: []
+tags:
+  - name: studio
+    description: Hosted by Polarkast; called by the operator.
+  - name: wallet
+    description: Hosted by the operator; called by Polarkast.
+paths:
+  /v1/launch:
+    post:
+      tags: [studio]
+      operationId: launch
+      summary: Get a game URL for a player session
+      description: |
+        Called by the operator when a player opens a game. Requires `X-Operator-Id` and `X-Signature`.
+        Polarkast calls the operator's `/wallet/authenticate` with the `session_token`; if that fails, the wallet's
+        error code is returned here with the same HTTP status (a wallet timeout or retryable failure becomes
+        `INTERNAL_ERROR` 503). If the `currency` differs from the one `authenticate` returned, the result is
+        `CURRENCY_MISMATCH`. An unknown `game_id` is `INVALID_REQUEST`. On success the operator redirects or embeds the
+        player at `game_url`. The URL is single-use for the player and valid for 5 minutes.
+      parameters:
+        - name: X-Operator-Id
+          in: header
+          required: true
+          description: Operator identifier issued by Polarkast. Selects the shared secret used to verify `X-Signature`.
+          schema: { type: string }
+          example: op_demo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LaunchRequest' }
+            examples:
+              ok:
+                value:
+                  session_token: sess_8f3a
+                  player_id: player-42
+                  game_id: stub
+                  currency: EUR
+                  language: en
+      responses:
+        '200':
+          description: Game URL created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LaunchResponse' }
+              examples:
+                ok:
+                  value: { game_url: 'https://play.polarkast.example/g/stub?t=lt_5c1e9d' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '403': { $ref: '#/components/responses/InvalidSession' }
+        '422': { $ref: '#/components/responses/CurrencyMismatch' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/InternalError' }
+  /wallet/authenticate:
+    post:
+      tags: [wallet]
+      operationId: walletAuthenticate
+      summary: Validate a session token
+      description: |
+        Operator validates the `session_token` and returns the player, the session's currency and precision, and the
+        current balance. Read-only; safe to repeat. Fixes the currency and precision for the session (see Money).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthenticateRequest' }
+            examples:
+              ok: { value: { session_token: sess_8f3a } }
+      responses:
+        '200':
+          description: Session is valid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthenticateResponse' }
+              examples:
+                ok: { value: { player_id: player-42, currency: EUR, precision: 2, balance: 100000 } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '403': { $ref: '#/components/responses/InvalidSession' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /wallet/balance:
+    post:
+      tags: [wallet]
+      operationId: walletBalance
+      summary: Get the player's balance
+      description: Read-only; safe to repeat. Returns the balance in the session's currency and precision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BalanceRequest' }
+            examples:
+              ok: { value: { session_token: sess_8f3a, player_id: player-42, game_id: stub } }
+      responses:
+        '200':
+          description: Current balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceResponse' }
+              examples:
+                ok: { value: { balance: 100000, currency: EUR, precision: 2 } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '403': { $ref: '#/components/responses/InvalidSession' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /wallet/bet:
+    post:
+      tags: [wallet]
+      operationId: walletBet
+      summary: Debit a stake
+      description: |
+        Debits `amount` (greater than 0) from the player. Idempotent on `transaction_id` (see Idempotency).
+        Errors: `INSUFFICIENT_FUNDS` when balance is below `amount` (nothing is debited); `TRANSACTION_ROLLED_BACK` when
+        a rollback already references this `transaction_id`. The session token must be valid at this moment
+        (`INVALID_SESSION` otherwise). Polarkast never retries a bet; it rolls back on timeout or retryable error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BetRequest' }
+            examples:
+              ok:
+                value:
+                  transaction_id: 6f0c1b7e-3b57-4d0e-9c53-0a1d1d0b2a11
+                  round_id: 0d9f5e1a-7f7a-4c0f-8d55-5b0a44a1c001
+                  player_id: player-42
+                  game_id: stub
+                  session_token: sess_8f3a
+                  amount: 100
+                  currency: EUR
+                  precision: 2
+      responses:
+        '200':
+          description: Stake debited (or the original response of an identical earlier call).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MoneyResponse' }
+              examples:
+                ok: { value: { balance: 99900, currency: EUR, precision: 2 } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '402': { $ref: '#/components/responses/InsufficientFunds' }
+        '403': { $ref: '#/components/responses/InvalidSession' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/CurrencyMismatch' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /wallet/win:
+    post:
+      tags: [wallet]
+      operationId: walletWin
+      summary: Credit a payout and close the round
+      description: |
+        Credits `amount` (0 or more) to the player for `round_id`. An `amount` of 0 closes a losing round and moves
+        no money; it is still a transaction with its own `transaction_id`. Idempotent on `transaction_id`. Polarkast
+        retries until a definitive response; the operator must accept it even if the session token has expired
+        (the token is then not checked, see Win and rollback checks; `player_id`, currency and precision must still
+        match the player: unknown `player_id` is `INVALID_REQUEST`, a different currency or precision is
+        `CURRENCY_MISMATCH`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WinRequest' }
+            examples:
+              win:
+                value:
+                  transaction_id: 2b5d8e44-91c0-4f6a-b0a5-7c2f6a9e5d02
+                  round_id: 0d9f5e1a-7f7a-4c0f-8d55-5b0a44a1c001
+                  player_id: player-42
+                  game_id: stub
+                  session_token: sess_8f3a
+                  amount: 250
+                  currency: EUR
+                  precision: 2
+              losing_round:
+                value:
+                  transaction_id: 9a1c3f20-0e7b-4a38-8a3e-6d6a1f5c7e03
+                  round_id: 3c7e2d10-5a44-4b1e-9d0f-1e2b3c4d5e06
+                  player_id: player-42
+                  game_id: stub
+                  session_token: sess_8f3a
+                  amount: 0
+                  currency: EUR
+                  precision: 2
+      responses:
+        '200':
+          description: Payout credited (or the original response of an identical earlier call).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MoneyResponse' }
+              examples:
+                ok: { value: { balance: 100150, currency: EUR, precision: 2 } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/CurrencyMismatch' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /wallet/rollback:
+    post:
+      tags: [wallet]
+      operationId: walletRollback
+      summary: Reverse a bet
+      description: |
+        Reverses the bet whose `transaction_id` is `bet_transaction_id`: the stake is credited back in full. The rollback
+        has its own `transaction_id`, idempotent as usual. Cases, all answered with HTTP 200:
+        the bet exists and is not yet rolled back (stake credited, bet marked rolled back); the bet was already rolled
+        back by another rollback (no money moves); the bet is unknown (no money moves; the id is recorded so a later
+        bet with it gets `TRANSACTION_ROLLED_BACK`). Polarkast retries until a definitive response. Like `win`, the
+        operator must accept it after the session token has expired (see Win and rollback checks). A rollback has no
+        `currency` or `precision` fields, so `CURRENCY_MISMATCH` never applies to it. The response `balance`,
+        `currency` and `precision` are the bet owner's (`player_id` must be the bet's player), after the call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackRequest' }
+            examples:
+              ok:
+                value:
+                  transaction_id: c4e1a7d2-6b38-4e19-a2f0-8d9b0c1e2f04
+                  bet_transaction_id: 6f0c1b7e-3b57-4d0e-9c53-0a1d1d0b2a11
+                  round_id: 0d9f5e1a-7f7a-4c0f-8d55-5b0a44a1c001
+                  player_id: player-42
+                  game_id: stub
+                  session_token: sess_8f3a
+      responses:
+        '200':
+          description: Rolled back, or nothing to roll back.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceResponse' }
+              examples:
+                ok: { value: { balance: 100000, currency: EUR, precision: 2 } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    HmacSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: Lowercase hex HMAC-SHA256 (64 characters) of the raw request body, keyed with the per-operator shared secret. See Signing.
+  schemas:
+    Id:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9_.:-]+$'
+    Currency:
+      type: string
+      minLength: 1
+      maxLength: 16
+      pattern: '^[A-Z0-9_]+$'
+      description: Opaque currency code. Not interpreted by Polarkast.
+      examples: [EUR, BTC, GC, SC]
+    Precision:
+      type: integer
+      minimum: 0
+      maximum: 18
+      description: Number of decimal places of the currency. Fixed per session.
+    Amount:
+      type: integer
+      format: int64
+      minimum: 0
+      maximum: 9007199254740991
+      description: Minor units. Never above 2^53-1.
+    PositiveAmount:
+      type: integer
+      format: int64
+      minimum: 1
+      maximum: 9007199254740991
+      description: Minor units, greater than 0. Never above 2^53-1.
+    LaunchRequest:
+      type: object
+      required: [session_token, player_id, game_id, currency, language]
+      properties:
+        session_token: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        language:
+          type: string
+          pattern: '^[a-z]{2}$'
+          description: ISO 639-1 lowercase two-letter code. An unsupported language falls back to `en`.
+    LaunchResponse:
+      type: object
+      required: [game_url]
+      properties:
+        game_url: { type: string, format: uri }
+    AuthenticateRequest:
+      type: object
+      required: [session_token]
+      properties:
+        session_token: { $ref: '#/components/schemas/Id' }
+    AuthenticateResponse:
+      type: object
+      required: [player_id, currency, precision, balance]
+      properties:
+        player_id: { $ref: '#/components/schemas/Id' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+        balance: { $ref: '#/components/schemas/Amount' }
+    BalanceRequest:
+      type: object
+      required: [session_token, player_id, game_id]
+      properties:
+        session_token: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+    BalanceResponse:
+      type: object
+      required: [balance, currency, precision]
+      properties:
+        balance: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+    MoneyResponse:
+      allOf:
+        - $ref: '#/components/schemas/BalanceResponse'
+      description: Balance after the operation is applied.
+    BetRequest:
+      type: object
+      required: [transaction_id, round_id, player_id, game_id, session_token, amount, currency, precision]
+      properties:
+        transaction_id: { $ref: '#/components/schemas/Id' }
+        round_id: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+        session_token: { $ref: '#/components/schemas/Id' }
+        amount: { $ref: '#/components/schemas/PositiveAmount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+    WinRequest:
+      type: object
+      required: [transaction_id, round_id, player_id, game_id, session_token, amount, currency, precision]
+      properties:
+        transaction_id: { $ref: '#/components/schemas/Id' }
+        round_id: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+        session_token: { $ref: '#/components/schemas/Id' }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+    RollbackRequest:
+      type: object
+      required: [transaction_id, bet_transaction_id, round_id, player_id, game_id, session_token]
+      properties:
+        transaction_id: { $ref: '#/components/schemas/Id' }
+        bet_transaction_id:
+          $ref: '#/components/schemas/Id'
+          description: The `transaction_id` of the bet to reverse.
+        round_id: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+        session_token: { $ref: '#/components/schemas/Id' }
+    ErrorCode:
+      type: string
+      description: |
+        Closed list; no other value is ever sent. HTTP status is fixed per code. "Fix" says what the integrator does.
+        - `INVALID_REQUEST` (400): body is not valid JSON, a field is missing, has the wrong type or is out of range
+          (including an amount above 2^53-1 or a bet of 0), the game is unknown, or on `win` and `rollback` the
+          `player_id` is unknown or not the bet's player. Fix: correct the request to match
+          this spec. Not retryable.
+        - `INVALID_SIGNATURE` (401): `X-Signature` is missing or does not match the HMAC-SHA256 of the raw body. Fix:
+          sign the exact bytes sent, lowercase hex, with the shared secret for this operator; do not re-serialize the
+          JSON after signing. Not retryable.
+        - `INVALID_SESSION` (403): authenticate, balance and bet only, never win or rollback. The session
+          token is unknown, expired or does not belong to `player_id`. Fix: the operator issues a fresh session token and launches again. Not retryable.
+        - `INSUFFICIENT_FUNDS` (402): bet only; balance is below the stake. Nothing was debited. Fix: the player
+          must deposit or choose a lower stake. Not retryable.
+        - `CURRENCY_MISMATCH` (422): `currency` or `precision` differs from the session's. Fix: send the currency and
+          precision returned by `/wallet/authenticate`, unchanged. Not retryable.
+        - `TRANSACTION_MISMATCH` (409): the `transaction_id` was already used with a different body or call type.
+          Fix: a new operation needs a new `transaction_id`; a retry must be byte-for-byte the same body. Not retryable.
+        - `TRANSACTION_ROLLED_BACK` (409): bet only; a rollback already references this `transaction_id`. Nothing was
+          debited. Fix: do not retry; the round is over. Not retryable.
+        - `INTERNAL_ERROR` (500, or 503 when unavailable): the receiver failed temporarily. Fix: the caller retries per
+          the retry rules; the receiver must not have moved money, or must make a retry safe through idempotency.
+          Retryable.
+      enum:
+        - INVALID_REQUEST
+        - INVALID_SIGNATURE
+        - INVALID_SESSION
+        - INSUFFICIENT_FUNDS
+        - CURRENCY_MISMATCH
+        - TRANSACTION_MISMATCH
+        - TRANSACTION_ROLLED_BACK
+        - INTERNAL_ERROR
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message:
+              type: string
+              description: Human-readable explanation that states the fix. Not for program logic.
+  responses:
+    InvalidRequest:
+      description: '`INVALID_REQUEST`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            amount_too_large:
+              value: { error: { code: INVALID_REQUEST, message: 'amount must be an integer from 1 to 9007199254740991 minor units; send an integer, not a decimal.' } }
+    InvalidSignature:
+      description: '`INVALID_SIGNATURE`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            bad_signature:
+              value: { error: { code: INVALID_SIGNATURE, message: 'X-Signature does not match HMAC-SHA256 of the raw body; sign the exact bytes you send with the shared secret and encode as lowercase hex.' } }
+    InvalidSession:
+      description: '`INVALID_SESSION`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            expired:
+              value: { error: { code: INVALID_SESSION, message: 'Session token is unknown or expired; issue a new session token and launch again.' } }
+    InsufficientFunds:
+      description: '`INSUFFICIENT_FUNDS`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            low_balance:
+              value: { error: { code: INSUFFICIENT_FUNDS, message: 'Balance is below the stake; deposit funds or lower the bet. Nothing was debited.' } }
+    CurrencyMismatch:
+      description: '`CURRENCY_MISMATCH`'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            wrong_precision:
+              value: { error: { code: CURRENCY_MISMATCH, message: 'Session currency is EUR with precision 2; send exactly those values.' } }
+    Conflict:
+      description: '`TRANSACTION_MISMATCH` or `TRANSACTION_ROLLED_BACK`, both HTTP 409.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            transaction_mismatch:
+              value: { error: { code: TRANSACTION_MISMATCH, message: 'transaction_id was already used with a different body; use a new transaction_id for a new operation, or resend the identical body.' } }
+            transaction_rolled_back:
+              value: { error: { code: TRANSACTION_ROLLED_BACK, message: 'A rollback already references this bet transaction_id; the bet was not applied and must not be retried.' } }
+    InternalError:
+      description: '`INTERNAL_ERROR`, HTTP 500 or 503. Retryable.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            unavailable:
+              value: { error: { code: INTERNAL_ERROR, message: 'Temporary failure; retry the same request with the same transaction_id.' } }

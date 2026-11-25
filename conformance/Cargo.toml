@@ -1,0 +1,12 @@
+[package]
+name = "conformance"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone on purpose: a second implementation of docs/openapi.yaml, no workspace crates.
+[dependencies]
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde_json = "1"
+sha2 = "0.10"
