@@ -26,7 +26,7 @@ See [conformance.md](conformance.md). Fix each reported failure, rerun, repeat. 
 ## 5. Call launch
 
 Add the signed `POST /v1/launch` call where a player opens a game. See [launch.md](launch.md).
-Check: it returns a `game_url`.
+Check: it returns a `game_url`. Then play one round against the hosted sandbox: [sandbox.md](sandbox.md).
 
 ## What stays human
 

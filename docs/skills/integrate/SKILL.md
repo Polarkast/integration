@@ -19,6 +19,7 @@ Rules: money is integers in minor units; secrets come from configuration, never 
    `POLARKAST_SHARED_SECRET=<secret> conformance --wallet-url <url> --session-token <token> [--expired-session-token <token>]`
    Get the binary from the `conformance-latest` release of https://github.com/Polarkast/integration (fallback: `cargo build --release -p conformance`).
    Fix each printed failure and rerun (see `conformance.md`).
+7. Make the wallet reachable over public HTTPS (locally `cloudflared tunnel --url http://localhost:<port>`; the URL changes every run, so a human must give Polarkast the new one), launch against the sandbox and play one round per `sandbox.md`. The wallet balance must change by exactly -bet + payout.
 
 ## Check
-The `conformance` command exits 0 with every check PASS. If it cannot run for lack of credentials or the binary, stop and ask a human.
+The `conformance` command exits 0 with every check PASS, and one sandbox round (`sandbox.md`) settled against your wallet. If it cannot run for lack of credentials or the binary, stop and ask a human.

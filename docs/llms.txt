@@ -12,6 +12,7 @@
 - [errors.md](errors.md): the closed list of error codes and when to return each.
 - [conformance.md](conformance.md): the conformance CLI; run it until it passes.
 - [launch.md](launch.md): calling `POST /v1/launch`.
+- [sandbox.md](sandbox.md): the hosted sandbox: expose your wallet, launch, play a forced win and loss.
 - [openapi.yaml](openapi.yaml): the spec. Consult it for every field, range and status.
 - [skills/integrate/SKILL.md](skills/integrate/SKILL.md): the same procedure as a skill.
 
