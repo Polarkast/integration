@@ -28,6 +28,11 @@ See [conformance.md](conformance.md). Fix each reported failure, rerun, repeat. 
 Add the signed `POST /v1/launch` call where a player opens a game. See [launch.md](launch.md).
 Check: it returns a `game_url`. Then play one round against the hosted sandbox: [sandbox.md](sandbox.md).
 
+## Afterwards: look a round up
+
+Call the signed `POST /v1/round` to get a round's transactions with their status and a link to a round page. See [rounds.md](rounds.md).
+Check: looking up a sandbox round by its id lists its bet and win as `succeeded`.
+
 ## What stays human
 
 Do not do these; stop and ask a person:

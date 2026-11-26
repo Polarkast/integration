@@ -10,7 +10,7 @@ info:
     source of truth; where code, docs or tests disagree with it, they are wrong.
 
     Three tags:
-    - `studio`: hosted by Polarkast. The operator calls it. Only `POST /v1/launch`.
+    - `studio`: hosted by Polarkast. The operator calls it. `POST /v1/launch` and `POST /v1/round`.
     - `wallet`: hosted by the operator at a base URL the operator configures with Polarkast. Polarkast calls it.
       Paths below are relative to that base URL (for example `https://wallet.operator.example` plus `/wallet/bet`).
     - `sandbox`: test endpoints of the hosted sandbox only. Sandbox only; not part of the operator contract.
@@ -47,7 +47,7 @@ info:
     (the secret's UTF-8 bytes, used as-is). Nothing else is signed: not the path, headers or query. The receiver
     computes the HMAC over the raw bytes it received (before any JSON parsing), compares it in constant time, and
     rejects a mismatch with `INVALID_SIGNATURE` before doing anything else. Responses are not signed.
-    Requests to `/v1/launch` also carry `X-Operator-Id` (issued by Polarkast) so the secret can be found.
+    Requests to `/v1/launch` and `/v1/round` also carry `X-Operator-Id` (issued by Polarkast) so the secret can be found.
 
     ## Idempotency
     Every money call (`bet`, `win`, `rollback`) is identified by its `transaction_id`, unique per operator across all
@@ -125,7 +125,7 @@ security:
   - HmacSignature: []
 tags:
   - name: studio
-    description: Hosted by Polarkast; called by the operator.
+    description: Hosted by Polarkast; called by the operator. `launch` and `round`.
   - name: wallet
     description: Hosted by the operator; called by Polarkast.
   - name: sandbox
@@ -180,6 +180,61 @@ paths:
         '401': { $ref: '#/components/responses/InvalidSignature' }
         '403': { $ref: '#/components/responses/LaunchForbidden' }
         '422': { $ref: '#/components/responses/CurrencyMismatch' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/InternalError' }
+  /v1/round:
+    post:
+      tags: [studio]
+      operationId: round
+      summary: Look up a round and get a short-lived round page URL
+      description: |
+        Called by the operator, for example from a back office or for reconciliation. Requires `X-Operator-Id` and
+        `X-Signature`, verified before the body is parsed. Send exactly one of `round_id` or `transaction_id`
+        (both, or neither, is `INVALID_REQUEST`); a `transaction_id` is resolved to the round it belongs to. A round or
+        transaction that does not exist, or that belongs to another operator, is the same `INVALID_REQUEST` with the
+        same message: an operator can read only its own rounds.
+        The response lists every transaction of the round in the order Polarkast logged it, each with the status
+        Polarkast holds for it, and `round_url`, a link to an HTML page for the round. The link is valid for 15 minutes
+        (`expires_at`) and may be opened any number of times within that time, for example by an embedded frame that
+        reloads; after it expires it answers 404. Call again for a new link. The link itself is the credential: do not
+        log or share it. The page is a plain GET, not an API operation: it shows the game and version, the time, every
+        bet, win and rollback with amount and status, the outcome and multiplier, and, when the round used provably fair
+        play, the commitment, client seed, nonce and draws. The server seed appears only once it has been revealed
+        by a seed rotation. Neither the response nor the page ever contains session tokens, signatures, the operator's
+        raw requests or responses, or a server seed that is not yet revealed.
+      parameters:
+        - name: X-Operator-Id
+          in: header
+          required: true
+          description: Operator identifier issued by Polarkast. Selects the shared secret used to verify `X-Signature`.
+          schema: { type: string }
+          example: op_demo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoundLookupRequest' }
+            examples:
+              by_round: { value: { round_id: 5b1d3c7e-2a64-4f08-8c19-7e3a9d4b6f21 } }
+              by_transaction: { value: { transaction_id: 0c9a6e1b-73d2-4c58-9d0e-3f5b8a21c4e7 } }
+      responses:
+        '200':
+          description: Round found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoundLookupResponse' }
+              examples:
+                settled:
+                  value:
+                    round_id: 5b1d3c7e-2a64-4f08-8c19-7e3a9d4b6f21
+                    game_id: stub
+                    round_url: 'https://play.polarkast.example/rounds/rt_2f6c0d9e4b7a4e1c8a35d1b7f0c9e642'
+                    expires_at: '2026-01-15T10:15:00.000Z'
+                    transactions:
+                      - { transaction_id: 0c9a6e1b-73d2-4c58-9d0e-3f5b8a21c4e7, kind: bet, amount: 100, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.120Z' }
+                      - { transaction_id: 9d41b7a0-5e3c-4f62-8b1a-6c0e2d7f9a35, kind: win, amount: 200, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.310Z' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/InternalError' }
   /game/open:
@@ -495,6 +550,58 @@ components:
       required: [game_url]
       properties:
         game_url: { type: string, format: uri }
+    RoundLookupRequest:
+      type: object
+      description: Exactly one of `round_id` and `transaction_id`.
+      oneOf:
+        - required: [round_id]
+        - required: [transaction_id]
+      properties:
+        round_id: { $ref: '#/components/schemas/Id' }
+        transaction_id: { $ref: '#/components/schemas/Id' }
+    RoundTransaction:
+      type: object
+      required: [transaction_id, kind, status, created_at]
+      properties:
+        transaction_id: { $ref: '#/components/schemas/Id' }
+        kind: { type: string, enum: [bet, win, rollback] }
+        amount: { type: integer, minimum: 0, description: Minor units. Absent for a rollback. }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+        status:
+          type: string
+          enum: [pending, succeeded, failed, needs_reconciliation, resolved]
+          description: |
+            Taken from this transaction's own log entries only.
+            - `pending`: sent or about to be sent, no final answer yet; Polarkast keeps retrying a win or rollback.
+            - `succeeded`: the operator's wallet applied it.
+            - `failed`: a bet the wallet refused, or whose answer is unknown; the round's `rollback` entry says what
+              happened to the money.
+            - `needs_reconciliation`: Polarkast stopped retrying (or the wallet refused definitively); the operator and
+              Polarkast must settle it by hand.
+            - `resolved`: a person at Polarkast closed a `needs_reconciliation` entry; `resolution` says how.
+        resolution:
+          type: string
+          enum: [settled, voided]
+          description: Only when `status` is `resolved`.
+        created_at: { type: string, format: date-time, description: When Polarkast first logged the transaction. }
+    RoundLookupResponse:
+      type: object
+      required: [round_id, game_id, round_url, expires_at, transactions]
+      properties:
+        round_id: { $ref: '#/components/schemas/Id' }
+        game_id: { $ref: '#/components/schemas/Id' }
+        round_url:
+          type: string
+          format: uri
+          description: |
+            `{base}/rounds/{token}`. A GET returns the round page as HTML (`text/html`, `Cache-Control: no-store`,
+            `Referrer-Policy: no-referrer`) until `expires_at`, 15 minutes after this response; then 404.
+        expires_at: { type: string, format: date-time }
+        transactions:
+          type: array
+          description: In the order Polarkast logged them.
+          items: { $ref: '#/components/schemas/RoundTransaction' }
     AuthenticateRequest:
       type: object
       required: [session_token]
@@ -614,7 +721,8 @@ components:
         Closed list; no other value is ever sent. HTTP status is fixed per code. "Fix" says what the integrator does.
         - `INVALID_REQUEST` (400): body is not valid JSON, a field is missing, has the wrong type or is out of range
           (including an amount above 2^53-1 or a bet of 0), the game is unknown, or on `win` and `rollback` the
-          `player_id` is unknown or not the bet's player, or a number is not an integer literal (`100.0`, `1e2`).
+          `player_id` is unknown or not the bet's player, on `/v1/round` the round or transaction is unknown to this
+          operator, or a number is not an integer literal (`100.0`, `1e2`).
           Fix: correct the request to match
           this spec. Not retryable.
         - `INVALID_SIGNATURE` (401): `X-Signature` is missing or does not match the HMAC-SHA256 of the raw body. Fix:

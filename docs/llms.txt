@@ -1,6 +1,6 @@
 # Polarkast
 
-> Polarkast is a game studio. Operators (casinos) integrate through a seamless-wallet API: Polarkast calls five endpoints on the operator's server to move money, and the operator calls one Polarkast endpoint to launch a game.
+> Polarkast is a game studio. Operators (casinos) integrate through a seamless-wallet API: Polarkast calls five endpoints on the operator's server to move money, and the operator calls Polarkast to launch a game and to look a round up.
 > The API spec `openapi.yaml` is authoritative; if any page disagrees with it, the spec wins.
 
 ## Read in this order
@@ -12,6 +12,7 @@
 - [errors.md](errors.md): the closed list of error codes and when to return each.
 - [conformance.md](conformance.md): the conformance CLI; run it until it passes.
 - [launch.md](launch.md): calling `POST /v1/launch`.
+- [rounds.md](rounds.md): calling `POST /v1/round`: a round's transactions with their status, and a short-lived round page.
 - [sandbox.md](sandbox.md): the hosted sandbox: credentials and wallet registration, expose your wallet, launch, play a forced win and loss.
 - [openapi.yaml](openapi.yaml): the spec. Consult it for every field, range and status.
 - [skills/integrate/SKILL.md](skills/integrate/SKILL.md): the same procedure as a skill.
