@@ -12,6 +12,7 @@
 - [errors.md](errors.md): the closed list of error codes and when to return each.
 - [conformance.md](conformance.md): the conformance CLI; run it until it passes.
 - [launch.md](launch.md): calling `POST /v1/launch`.
+- [catalog.md](catalog.md): calling `GET /v1/games`: the game catalog for your operator, with RTP per mode, stakes and play amounts.
 - [rounds.md](rounds.md): calling `POST /v1/round`: a round's transactions with their status, and a short-lived round page.
 - [sandbox.md](sandbox.md): the hosted sandbox: credentials and wallet registration, expose your wallet, launch, play a forced win and loss, then 4 Star Dragons.
 - [four-star-dragons.md](four-star-dragons.md): the game 4 Star Dragons: what your wallet sees, play amounts, bought rounds, fun mode.

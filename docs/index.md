@@ -28,6 +28,11 @@ See [conformance.md](conformance.md). Fix each reported failure, rerun, repeat. 
 Add the signed `POST /v1/launch` call where a player opens a game. See [launch.md](launch.md).
 Check: it returns a `game_url`. Then play one round against the hosted sandbox: [sandbox.md](sandbox.md).
 
+## Afterwards: import the game catalog
+
+Call the signed `GET /v1/games` to import Polarkast's games, their RTP and your stakes, and sync it daily. See [catalog.md](catalog.md).
+Check: the response lists `stub` with `rtp` 9600.
+
 ## Afterwards: look a round up
 
 Call the signed `POST /v1/round` to get a round's transactions with their status and a link to a round page. See [rounds.md](rounds.md).
