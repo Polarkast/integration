@@ -2,6 +2,11 @@
 
 Tests an operator wallet the way Polarkast calls it. The rules it checks come from [openapi.yaml](openapi.yaml); every failure's fix names the rule.
 
+## Which run counts
+The run from the client area (Conformance page) is the one that counts for go-live: Polarkast runs the same checks against your registered wallet URL, signed with your operator's secret, and stores the result (every check, with the request, expected, actual and fix). You enter a test player's session token and an expired session token for that run only; they are never stored. The wallet URL must be reachable from the internet. Runs take up to a minute, one at a time per operator.
+
+The CLI below runs the same checks on your machine. Use it while your wallet is only on localhost; its result is not stored and does not count for go-live.
+
 ## Prepare
 1. Run your wallet where the CLI can reach it.
 2. Create a test player with a balance of at least 1000 minor units and an active session token. The CLI moves this player's balance: use a player for conformance only, and a different player for the sandbox round in [sandbox.md](sandbox.md).
