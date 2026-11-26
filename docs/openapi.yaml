@@ -18,16 +18,26 @@ info:
       is written down and so a round can be played without the client, for example in the sandbox.
 
     ## Games
-    Every `game_id` belongs to one of two families.
+    Every `game_id` belongs to one of three families.
     - Weighted (`stub`, the sandbox's test game): a bet, then one outcome from the game's table.
-    - Hold-and-win (`four-star-dragons`): the player picks a play amount (`bet`) from the session's `bets` and a round
-      `mode`. A `base` round costs the play amount; a `buy` round starts the hold-and-win feature at once and costs
-      `ceil(bet * buyCost / 100)`, where `buyCost` is in the game's display model (`/game/open`). The wallet bet's
-      `amount` is that cost, and the operator's stake limits for the currency apply to it. The round's win is a
-      whole number of hundredths of the play amount (`script.win`), never above the game's `cap`; the wallet win's
-      `amount` is `floor(bet * script.win / 100)`.
+    - Hold-and-win (`four-star-dragons`) and pay-anywhere (`nova-forge`): the player picks a play amount (`bet`) from
+      the session's `bets` and a round `mode`. A `base` round costs the play amount. A `buy` round starts the game's
+      feature at once and costs `ceil(bet * buyCost / 100)`. A pay-anywhere game also has `ante`: a base round with
+      more scatters, costing `bet * anteCost / 100`, and offered only at play amounts where that is a whole number of
+      minor units (with `anteCost` 125, a multiple of 4), so that the round's return is the game's at every play
+      amount; `ante` at any other play amount is `INVALID_REQUEST`. `buyCost` and `anteCost` are in the game's
+      display model (`/game/open`). The wallet bet's `amount` is the round's cost, and the operator's stake limits
+      for the currency apply to it, not to the play amount. The round's win is a whole number of hundredths of the
+      play amount (`script.win`), never above the game's `cap`; the wallet win's `amount` is
+      `floor(bet * script.win / 100)`.
 
-      Each player has four pots that carry from round to round. Polarkast keeps them per operator, player, game,
+      Pay-anywhere: nothing carries from round to round. A spin pays wherever enough of one symbol lands on its 6 by
+      5 board, and its wins tumble out: they go, the rest fall, new symbols drop in, and the board pays again; a spin
+      pays at most `maxTumbles` times. Multiplier symbols multiply what a winning spin's tumbles paid. A base spin's
+      scatters pay and, at least `triggerAt` of them, start free spins, in which every winning spin's multipliers add
+      to one feature multiplier that only grows; a feature plays at most `maxFreeSpins` free spins.
+
+      Hold-and-win: each player has four pots that carry from round to round. Polarkast keeps them per operator, player, game,
       currency and play amount, and they never expire. A base round reads and changes the pots of its play amount; a
       bought round neither reads nor changes any pots; a bet that fails or is rolled back leaves them as they were.
       The first time a player uses a play amount, its pots get a warm start: unpaid spins from empty pots, drawn once
@@ -39,7 +49,7 @@ info:
     `session_token` and `player_id` are ignored, and Polarkast makes no wallet call of any kind for the session. The
     launch's `currency` must be enabled for the operator; its precision, stake limits and symbol apply. The balance
     starts at 1000000 minor units of it. Fun rounds use the CSPRNG and are not recorded: they never reach the money
-    log or `/v1/round`. Pots last for the session only, and start warm like a player's. A fun session never becomes a
+    log or `/v1/round`. A hold-and-win game's pots last for the session only, and start warm like a player's. A fun session never becomes a
     money session; launch again without `mode` for real play.
     A fun session ends 30 minutes after its last request (`/game/open` or a round), and a server restart may end it
     sooner; its `game_session_id` is then `INVALID_SESSION`. Rate limits: at most 600 fun launches a minute per
@@ -54,6 +64,10 @@ info:
     - A hold-and-win `/game/round` response, script included, is at most 32 KiB. Typical sizes over 1,000,000 rounds
       of each mode: a base round 0.4 KiB (99% under 1 KiB, the largest 4.4 KiB), a bought round 1.4 KiB (99% under
       2.2 KiB, the largest 3 KiB).
+    - A pay-anywhere `/game/round` response has no fixed bound short of the game's own (`maxTumbles` a spin,
+      `maxFreeSpins` a feature), so a client accepts any size. Over 1,000,000 rounds of each mode, script included: a
+      base or ante round 0.5 KiB (99% under 1.1 KiB, the largest seen about 17 KiB), a bought round 6 KiB (99% under
+      10 KiB, the largest seen about 20 KiB); none reached 32 KiB.
     - Fun mode: the rate limits above.
 
     ## Transport
@@ -277,8 +291,13 @@ paths:
         the pots before and after. Its page shows the same, the round's key moments (the hold-and-win feature
         triggered, a pot filled, the board opened) and how to replay it: the draws, in the order they were used, with
         the pots before, reproduce the round and the pots after on the game and engine versions the page names; on a
-        provably fair round, the revealed server seed, the client seed and the nonce reproduce the draws. Fun rounds
-        are not recorded and are never found.
+        provably fair round, the revealed server seed, the client seed and the nonce reproduce the draws.
+        A pay-anywhere round has `pay_anywhere` instead: its mode, play amount, the amount debited and the win split
+        between the base spin and the free spins. Its page shows the same, the round's key moments (free spins
+        started, free spins added, the cap reached) and how to replay it: the draws, in the order they were used,
+        reproduce the round on the game and engine versions the page names; on a provably fair round, the revealed
+        server seed, the client seed and the nonce reproduce the draws. Fun rounds are not recorded and are never
+        found.
       parameters:
         - name: X-Operator-Id
           in: header
@@ -326,6 +345,20 @@ paths:
                       win_x100: { lines: 150, collect: 0, bonus: 0 }
                       pots_before: [12, 29, 4, 21]
                       pots_after: [13, 29, 4, 21]
+                pay_anywhere:
+                  value:
+                    round_id: 1f6a3d80-9c2e-4b57-a1d4-6e0b8c3f2a95
+                    game_id: nova-forge
+                    round_url: 'https://play.polarkast.example/rounds/rt_4c8e2a7f1b0d4e9a8f3c6b2d1e0a7f58'
+                    expires_at: '2026-01-15T10:15:00.000Z'
+                    transactions:
+                      - { transaction_id: 8b2d6f04-1e9a-4c73-b5d8-0a3f7e1c9b26, kind: bet, amount: 125, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.120Z' }
+                      - { transaction_id: 2e7c9a51-6b0d-4f38-8c1e-5d9a3b7f0e42, kind: win, amount: 9400, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.290Z' }
+                    pay_anywhere:
+                      mode: ante
+                      bet: 100
+                      cost: 125
+                      win_x100: { base: 300, free: 9100 }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidSignature' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -341,11 +374,12 @@ paths:
         has its play-money balance instead). The optional `device` is recorded on the session; operators never send
         it, the game client does. The response carries the launch's `lobby_url` (the target of the game's home button)
         and the currency's `currency_symbol` when Polarkast has configured one.
-        For a hold-and-win game it also carries what the client needs to draw the game without its engine: the display
-        model (`game`), the play amounts this session may use (`bets`), the opening play amount (`bet`), the pots at it
-        (`pots`, warm-started if the player has never used it, see Games) and the operator's `stake_limits`, which
-        apply to the amount a round debits. A bought round is possible at a play amount whose cost is at most
-        `stake_limits.max`.
+        For a hold-and-win or pay-anywhere game it also carries what the client needs to draw the game without its
+        engine: the display model (`game`), the play amounts this session may use (`bets`), the opening play amount
+        (`bet`) and the operator's `stake_limits`, which apply to the amount a round debits; a hold-and-win game also
+        carries the pots at the opening play amount (`pots`, warm-started if the player has never used it, see Games).
+        A bought or ante round is possible at a play amount whose cost is at most `stake_limits.max`, and an ante round
+        only where its cost is a whole number of minor units (see Games).
       security: []
       requestBody:
         required: true
@@ -411,6 +445,40 @@ paths:
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 1
+                pay_anywhere:
+                  value:
+                    game_session_id: 6d2b9f41-0e7a-4c35-b8d1-3a9e5c7f0b24
+                    player_id: player-42
+                    game_id: nova-forge
+                    currency: EUR
+                    precision: 2
+                    balance: 100000
+                    currency_symbol: '€'
+                    game:
+                      kind: 'pay_anywhere'
+                      id: 'nova-forge'
+                      version: 1
+                      name: 'Nova Forge'
+                      symbols: [{ id: 0, key: 'L5', name: 'Sapphire' }, { id: 1, key: 'L4', name: 'Emerald' }, { id: 2, key: 'L3', name: 'Amethyst' }, { id: 3, key: 'L2', name: 'Amber' }, { id: 4, key: 'L1', name: 'Ruby' }, { id: 5, key: 'H4', name: 'Comet' }, { id: 6, key: 'H3', name: 'Ringed planet' }, { id: 7, key: 'H2', name: 'Star helmet' }, { id: 8, key: 'H1', name: 'Nova star' }, { id: 9, key: 'SC', name: 'Warp gate' }, { id: 10, key: 'MX', name: 'Nova Core' }]
+                      tiers: [8, 10, 12]
+                      pays: [[25, 60, 250], [40, 100, 400], [60, 130, 600], [90, 200, 900], [120, 250, 1200], [200, 500, 2000], [300, 800, 2500], [500, 1200, 4000], [1200, 4000, 8000]]
+                      scatterPays: [0, 0, 0, 0, 300, 500, 10000]
+                      triggerAt: 4
+                      freeSpins: 15
+                      retriggerAt: 3
+                      retriggerSpins: 5
+                      multipliers: [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 50, 100, 250, 500]
+                      cap: 500000
+                      anteCost: 125
+                      buyCost: 10000
+                      maxTumbles: 50
+                      maxFreeSpins: 300
+                    bets: [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]
+                    bet: 100
+                    stake_limits: { min: 10, max: 1000000 }
+                    server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
+                    client_seed: polarkast
+                    next_nonce: 0
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '403': { $ref: '#/components/responses/InvalidSession' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -470,6 +538,13 @@ paths:
         change when the bet fails or is rolled back. The response carries the round's `script`: what the
         client animates, in full, including the win split (`lineWin`, `collectWin`, `bonusWin`) and the pots after
         (`potsAfter`). `force_outcome` is not available (`INVALID_REQUEST`).
+        Pay-anywhere games: `bet` is a play amount from the session's `bets` (otherwise `INVALID_REQUEST`) and `mode` is
+        `base` (the default), `ante` (only at play amounts that allow it, otherwise `INVALID_REQUEST`) or `buy`; the
+        wallet bet is the round's `cost` (see Games), and the stake limits apply to it. Nothing is kept between rounds.
+        The response carries
+        the round's `script`: the base spin (none for a bought round) and any free spins, each board with its tumbles,
+        and the win split (`baseWin`, `freeWin`). `force_outcome` is not available (`INVALID_REQUEST`).
+        `ante` in any other game, and `buy` in a weighted game, is `INVALID_REQUEST`.
         Fun sessions: the same, against the session's play-money balance with no wallet call; more than the fun round
         rate limit is `RATE_LIMITED`.
       security: []
@@ -481,6 +556,7 @@ paths:
             examples:
               forced_win: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r1, bet: 100, force_outcome: 2 } }
               bought: { value: { game_session_id: 2c7d1e90-6a3b-4f58-8e21-9d0c4b7a5f13, request_id: r7, bet: 100, mode: buy } }
+              ante: { value: { game_session_id: 6d2b9f41-0e7a-4c35-b8d1-3a9e5c7f0b24, request_id: r3, bet: 100, mode: ante } }
       responses:
         '200':
           description: Round played and settled.
@@ -506,6 +582,16 @@ paths:
                     payout: 150
                     balance: 100050
                     script: { mode: 'base', wins: [{ line: 19, sym: 7, count: 3, pay: 150, cells: [0, 5, 8] }], grid: [7, 8, 2, 1, 6, 7, 8, 11, 7, 3, 10, 3, 0, 0, 4], coins: [{ cell: 7, type: 1, value: 50 }, { cell: 10, type: 0, value: 100 }], fed: [{ pot: 0, to: 13, cell: 7 }], filled: [], collect: null, bonus: null, potsBefore: [12, 29, 4, 21], potsAfter: [13, 29, 4, 21], win: 150, lineWin: 150, collectWin: 0, bonusWin: 0, triggered: false, capped: false }
+                pay_anywhere:
+                  summary: A base round whose one tumble pays 2x (eight Comets); a x3 and a x6 multiplier make it 18x
+                  value:
+                    round_id: 1f6a3d80-9c2e-4b57-a1d4-6e0b8c3f2a95
+                    mode: base
+                    bet: 100
+                    cost: 100
+                    payout: 1800
+                    balance: 101700
+                    script: { mode: 'base', base: { grid: [2, 5, 10, 0, 0, 5, 0, 3, 1, 5, 4, 2, 5, 1, 7, 3, 4, 5, 2, 0, 10, 5, 5, 1, 5, 0, 2, 3, 3, 1], multipliers: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0], tumbles: [{ wins: [{ symbol: 5, count: 8, pay: 200, cells: [1, 5, 9, 12, 17, 21, 22, 24] }], win: 200, added: [[[3, 0]], [[0, 0], [0, 0]], [[2, 0]], [[3, 0]], [[3, 0], [1, 0], [1, 0]], []] }], raw: 200, multiplierSum: 9, scatters: 0, scatterPay: 0, win: 1800 }, free: [], win: 1800, baseWin: 1800, freeWin: 0, triggered: false, capped: false }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '402': { $ref: '#/components/responses/InsufficientFunds' }
         '403': { $ref: '#/components/responses/RoundForbidden' }
@@ -824,6 +910,24 @@ components:
           description: In the order Polarkast logged them.
           items: { $ref: '#/components/schemas/RoundTransaction' }
         hold_and_win: { $ref: '#/components/schemas/HoldAndWinRound' }
+        pay_anywhere: { $ref: '#/components/schemas/PayAnywhereRound' }
+    PayAnywhereRound:
+      type: object
+      description: Pay-anywhere rounds only; absent for other games.
+      required: [mode, bet, cost, win_x100]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The amount debited, the bet transaction's `amount`.
+        win_x100:
+          type: object
+          description: The win split, in hundredths of the play amount. The payout is `floor(bet * (base + free) / 100)`.
+          required: [base, free]
+          properties:
+            base: { type: integer, minimum: 0, description: 'The base spin, its scatter pay included; 0 for a bought round.' }
+            free: { type: integer, minimum: 0, description: The free spins. }
     HoldAndWinRound:
       type: object
       description: Hold-and-win rounds only; absent for other games.
@@ -972,23 +1076,29 @@ components:
           type: integer
           minimum: 0
           description: Provably fair operators only. The nonce the next round will use.
-        game: { $ref: '#/components/schemas/HoldAndWinGame' }
+        game:
+          description: Hold-and-win and pay-anywhere games only. The display model; `kind` tells the families apart.
+          oneOf:
+            - $ref: '#/components/schemas/HoldAndWinGame'
+            - $ref: '#/components/schemas/PayAnywhereGame'
         bets:
           type: array
           description: |
-            Hold-and-win only. The play amounts this session may use, smallest first: the operator's minimum stake for
-            the currency, then every amount of 1, 2 or 5 times a power of ten minor units above it, up to the maximum
-            stake, at most 16 amounts in all.
+            Hold-and-win and pay-anywhere games only. The play amounts this session may use, smallest first: the
+            operator's minimum stake for the currency, then every amount of 1, 2 or 5 times a power of ten minor units
+            above it, up to the maximum stake, at most 16 amounts in all.
           minItems: 1
           maxItems: 16
           items: { $ref: '#/components/schemas/PositiveAmount' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: Hold-and-win only. The opening play amount, one of `bets`; the play amount of the player's last base round in this game and currency when it is in `bets`, otherwise the smallest.
-        pots: { $ref: '#/components/schemas/Pots' }
+          description: Hold-and-win and pay-anywhere games only. The opening play amount, one of `bets`; the play amount of the player's last base or ante round in this game and currency when it is in `bets`, otherwise the smallest.
+        pots:
+          $ref: '#/components/schemas/Pots'
+          description: Hold-and-win only. The pots at the opening play amount.
         stake_limits:
           type: object
-          description: Hold-and-win only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
+          description: Hold-and-win and pay-anywhere games only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
           required: [min, max]
           properties:
             min: { $ref: '#/components/schemas/PositiveAmount' }
@@ -1013,18 +1123,20 @@ components:
         request_id: { type: string, description: 'Idempotency key, unique per game session.' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: The stake of a weighted round; the play amount of a hold-and-win round, which debits its `cost`.
+          description: The stake of a weighted round; the play amount of a hold-and-win or pay-anywhere round, which debits its `cost`.
         mode:
           $ref: '#/components/schemas/RoundMode'
-          description: Optional, default `base`. `buy` only for hold-and-win games.
+          description: Optional, default `base`. `buy` for hold-and-win and pay-anywhere games; `ante` for pay-anywhere games only.
         force_outcome:
           type: integer
           minimum: 0
           description: Sandbox operators and weighted games only. Index into the game's outcome table (the `stub` game has 0 to 4).
     GameRoundResponse:
-      oneOf:
+      description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win` or `pay_anywhere`). Their required fields differ, so a response matches only its own."
+      anyOf:
         - $ref: '#/components/schemas/WeightedRoundResponse'
         - $ref: '#/components/schemas/HoldAndWinRoundResponse'
+        - $ref: '#/components/schemas/PayAnywhereRoundResponse'
     WeightedRoundResponse:
       type: object
       required: [round_id, outcome_index, payout, balance]
@@ -1048,9 +1160,25 @@ components:
           description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
         balance: { $ref: '#/components/schemas/Amount' }
         script: { $ref: '#/components/schemas/HoldAndWinScript' }
+    PayAnywhereRoundResponse:
+      type: object
+      required: [round_id, mode, bet, cost, payout, balance, script]
+      properties:
+        round_id: { type: string, description: 'For a fun round, an id for the client only: it is never recorded.' }
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The amount debited by the wallet bet.
+        payout:
+          $ref: '#/components/schemas/Amount'
+          description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
+        balance: { $ref: '#/components/schemas/Amount' }
+        script: { $ref: '#/components/schemas/PayAnywhereScript' }
     RoundMode:
       type: string
-      enum: [base, buy]
+      enum: [base, ante, buy]
+      description: '`base` in every game; `buy` in hold-and-win and pay-anywhere games; `ante` in pay-anywhere games (see Games).'
     Pots:
       type: array
       description: The four pots' counts, in the order of the display model's `pots`; each from 0 to `potSize`, and a pot at `potSize` is full.
@@ -1248,6 +1376,165 @@ components:
               mult: { type: integer, minimum: 2 }
               from: { type: integer, minimum: 0 }
               to: { type: integer, minimum: 0 }
+    PayAnywhereGame:
+      type: object
+      description: |
+        Pay-anywhere only. What the client draws and explains, without the engine: names, pays and the free spins'
+        rules. Amounts (`pays`, `scatterPays`, `cap`, `anteCost`, `buyCost`) are in hundredths of the play amount. It
+        holds no weights or odds; the game's RTP is on its game sheet.
+      required: [kind, id, version, name, symbols, tiers, pays, scatterPays, triggerAt, freeSpins, retriggerAt, retriggerSpins, multipliers, cap, anteCost, buyCost, maxTumbles, maxFreeSpins]
+      properties:
+        kind: { type: string, const: pay_anywhere }
+        id: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1, description: The game's version; rounds record it. }
+        name: { type: string }
+        symbols:
+          type: array
+          description: 'By symbol id: 0 to 8 pay anywhere, 9 is the scatter, 10 the multiplier symbol.'
+          minItems: 11
+          maxItems: 11
+          items:
+            type: object
+            required: [id, key, name]
+            properties:
+              id: { type: integer, minimum: 0, maximum: 10 }
+              key: { type: string }
+              name: { type: string }
+        tiers:
+          type: array
+          description: The counts, strictly rising, at which a paying symbol pays its first, second and third pay. The first is the fewest that pay.
+          minItems: 3
+          maxItems: 3
+          items: { type: integer, minimum: 1, maximum: 30 }
+        pays:
+          type: array
+          description: Per paying symbol (ids 0 to 8), what it pays at each tier, wherever on the board its count stands.
+          minItems: 9
+          maxItems: 9
+          items: { type: array, minItems: 3, maxItems: 3, items: { type: integer, minimum: 1 } }
+        scatterPays:
+          type: array
+          description: What a base spin's scatters pay, by their count (index 0 for none); a count past the end pays the last entry. Free spins pay none.
+          minItems: 1
+          maxItems: 31
+          items: { type: integer, minimum: 0 }
+        triggerAt: { type: integer, minimum: 1, description: At least this many scatters on a base spin's last board start free spins. }
+        freeSpins: { type: integer, minimum: 1, maximum: 300, description: Free spins a feature starts with. }
+        retriggerAt: { type: integer, minimum: 1, description: At least this many scatters on a free spin's last board add `retriggerSpins`. }
+        retriggerSpins: { type: integer, minimum: 0, description: Free spins a retrigger adds however many scatters it shows; a feature never plays more than `maxFreeSpins`. }
+        maxTumbles: { type: integer, minimum: 1, description: 'The most times one spin pays; a board that reaches it is not paid again, whatever stands on it.' }
+        maxFreeSpins: { type: integer, minimum: 1, description: 'The most free spins one feature plays, retriggers included.' }
+        multipliers: { type: array, description: What a multiplier symbol can carry., items: { type: integer, minimum: 1 } }
+        cap: { type: integer, minimum: 1, description: 'The most one round pays, base spin and free spins together.' }
+        anteCost: { type: integer, minimum: 1, description: The cost of an ante round. }
+        buyCost: { type: integer, minimum: 1, description: The cost of a bought round. }
+    PayAnywhereScript:
+      type: object
+      description: |
+        One round, decided in full by the server; the client replays it as it is. Amounts are in hundredths of the play
+        amount. Cells are `column * 5 + row` on the 6 by 5 board, row 0 at the top. A bought round has no base spin
+        (`base` is `null`); a base or ante round has free spins when its base spin shows at least `triggerAt` scatters
+        and has not reached `cap`.
+      required: [mode, base, free, win, baseWin, freeWin, triggered, capped]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        base:
+          oneOf: [{ $ref: '#/components/schemas/PayAnywhereBaseSpin' }, { type: 'null' }]
+        free:
+          type: array
+          description: The free spins, in order; at most `maxFreeSpins`.
+          items: { $ref: '#/components/schemas/PayAnywhereFreeSpin' }
+        win: { type: integer, minimum: 0, description: '`baseWin + freeWin`, at most `cap`.' }
+        baseWin: { type: integer, minimum: 0, description: The base spin's `win`; 0 for a bought round. }
+        freeWin: { type: integer, minimum: 0, description: The free spins' wins added together. }
+        triggered: { type: boolean, description: The base spin showed at least `triggerAt` scatters (always true for a bought round). }
+        capped: { type: boolean, description: The round reached `cap`. }
+    PayAnywhereBoard:
+      type: object
+      description: One board as it landed, its tumbles and what they came to.
+      required: [grid, multipliers, tumbles, raw, multiplierSum, scatters]
+      properties:
+        grid:
+          type: array
+          description: The symbol ids as the board landed.
+          minItems: 30
+          maxItems: 30
+          items: { type: integer, minimum: 0, maximum: 10 }
+        multipliers:
+          type: array
+          description: Each cell's multiplier as the board landed; 0 where no multiplier symbol stands.
+          minItems: 30
+          maxItems: 30
+          items: { type: integer, minimum: 0 }
+        tumbles:
+          type: array
+          description: In order; at most `maxTumbles`. A board that reached it is not paid again, whatever stands on it.
+          items: { $ref: '#/components/schemas/PayAnywhereTumble' }
+        raw: { type: integer, minimum: 0, description: What the tumbles paid before any multiplier. }
+        multiplierSum: { type: integer, minimum: 0, description: The multipliers on the last board added together; 0 when the tumbles paid nothing. }
+        scatters: { type: integer, minimum: 0, maximum: 30, description: Scatters on the last board. }
+    PayAnywhereTumble:
+      type: object
+      description: |
+        One tumble. Every cell of each winning symbol goes at once; scatters and multiplier symbols never go. In each
+        column the symbols that stay fall to the bottom in their order, a multiplier symbol keeping its multiplier, and
+        new symbols fill the rows above them. `added` lists, for each column 0 to 5, the new symbols top row first as
+        `[symbol, multiplier]` (multiplier 0 for any symbol but the multiplier symbol). Applied to the board before, it
+        gives the board after; the last board is the one after the last tumble.
+      required: [wins, win, added]
+      properties:
+        wins:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [symbol, count, pay, cells]
+            properties:
+              symbol: { type: integer, minimum: 0, maximum: 8 }
+              count: { type: integer, minimum: 1, maximum: 30 }
+              pay: { type: integer, minimum: 1, description: The symbol's pay at the tier its count reaches. }
+              cells: { type: array, description: 'Where the symbol stood, ascending.', maxItems: 30, items: { type: integer, minimum: 0, maximum: 29 } }
+        win: { type: integer, minimum: 1, description: The wins' pays added together. }
+        added:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            type: array
+            maxItems: 5
+            items:
+              type: array
+              minItems: 2
+              maxItems: 2
+              prefixItems:
+                - { type: integer, minimum: 0, maximum: 10, description: The symbol id. }
+                - { type: integer, minimum: 0, description: Its multiplier; 0 unless it is the multiplier symbol. }
+    PayAnywhereBaseSpin:
+      description: The base spin of a base or ante round.
+      allOf:
+        - $ref: '#/components/schemas/PayAnywhereBoard'
+        - type: object
+          required: [scatterPay, win]
+          properties:
+            scatterPay: { type: integer, minimum: 0, description: What the last board's scatters pay (`scatterPays`). }
+            win: { type: integer, minimum: 0, description: '`raw` times `multiplierSum` (times 1 when it is 0), plus `scatterPay`, at most `cap`.' }
+    PayAnywhereFreeSpin:
+      description: One free spin.
+      allOf:
+        - $ref: '#/components/schemas/PayAnywhereBoard'
+        - type: object
+          required: [multiplierBefore, multiplierAfter, win, spinsAdded, spinsLeft, total, capped]
+          properties:
+            multiplierBefore: { type: integer, minimum: 1, description: The feature multiplier before this spin. }
+            multiplierAfter:
+              type: integer
+              minimum: 1
+              description: The feature multiplier after this spin. A winning spin adds its `multiplierSum` to the multipliers collected so far; a feature starts with none, shown as 1, so the first multipliers replace the 1 rather than add to it.
+            win: { type: integer, minimum: 0, description: '`raw` times `multiplierAfter`, at most what is left under `cap`.' }
+            spinsAdded: { type: integer, minimum: 0, description: '`retriggerSpins` when the last board shows at least `retriggerAt` scatters; fewer only where that would take the feature past `maxFreeSpins`. On a spin that reaches `cap` the added spins are not played.' }
+            spinsLeft: { type: integer, minimum: 0, description: Free spins left after this one; 0 on a spin that reached `cap`. }
+            total: { type: integer, minimum: 0, description: The free spins' win so far. }
+            capped: { type: boolean, description: This spin reached `cap`; the feature ends with it. }
     ErrorCode:
       type: string
       description: |

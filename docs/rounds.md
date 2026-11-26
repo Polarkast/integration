@@ -13,6 +13,7 @@ Body: exactly one of `round_id` or `transaction_id` (a bet, win or rollback id).
 - `round_url`: a link to an HTML page of the round (game, time, every transaction, the outcome, and for provably fair play the proof). Embed or open it; the spec states how long it is valid. It is a bearer link: do not log or share it, and call again for a fresh one when it expires.
 
 - `hold_and_win`: only for a hold-and-win game such as [4 Star Dragons](four-star-dragons.md): the round's `mode` (`base` or `buy`), the play amount `bet`, the amount debited `cost` (the bet transaction's amount), the win split `win_x100` (lines, collect, feature; hundredths of the play amount) and the player's pots before and after (`null` for a bought round). The page adds the round's key moments and how to replay it from its recorded draws.
+- `pay_anywhere`: only for a pay-anywhere game such as [Nova Forge](nova-forge.md): the round's `mode` (`base`, `ante` or `buy`), the play amount `bet`, the amount debited `cost` and the win split `win_x100` (base spin and free spins; hundredths of the play amount). The page adds the round's key moments and how to replay it from its recorded draws.
 
 Neither the response nor the page contains session tokens, signatures or your raw wallet requests and responses. Fun rounds are never recorded, so they are never found.
 
