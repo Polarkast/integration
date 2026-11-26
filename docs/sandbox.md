@@ -15,7 +15,7 @@ You register your sandbox wallet's base URL, and every later change to it, in th
 
 A new operator has the games `stub` and `four-star-dragons` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units). Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
 
-The sandbox game is `stub`. Its outcomes are deterministic when forced (`force_outcome` works only in the sandbox):
+The test game is `stub`: play it first (step 5), then the real game, `four-star-dragons` (step 6). `stub`'s outcomes are deterministic when forced (`force_outcome` works only in the sandbox and only for `stub`):
 
 | `force_outcome` | multiplier | payout for bet 100 |
 |---|---|---|
