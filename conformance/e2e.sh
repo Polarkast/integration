@@ -2,6 +2,7 @@
 # Conformance against the known-good reference (must pass) and a known-bad wallet (must fail on specific checks).
 set -eu
 cd "$(dirname "$0")/.."
+(cd reference/node-express && npm ci --no-audit --no-fund >/dev/null)
 cargo build -q -p conformance
 BIN=target/debug/conformance
 OUT=$(mktemp -d)
