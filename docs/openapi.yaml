@@ -10,7 +10,8 @@ info:
     source of truth; where code, docs or tests disagree with it, they are wrong.
 
     Three tags:
-    - `studio`: hosted by Polarkast. The operator calls it. `POST /v1/launch` and `POST /v1/round`.
+    - `studio`: hosted by Polarkast. The operator calls it. `POST /v1/launch`, `POST /v1/round`, `GET /v1/games`
+      (the game catalog), `POST /v1/rewards` and `POST /v1/rewards/cancel` (free rounds).
     - `wallet`: hosted by the operator at a base URL the operator configures with Polarkast. Polarkast calls it.
       Paths below are relative to that base URL (for example `https://wallet.operator.example` plus `/wallet/bet`).
     - `game`: hosted by Polarkast and called by the Polarkast game client, which `game_url` serves on the same
@@ -44,6 +45,33 @@ info:
       from the operator's RNG, so they stand where a long game typically stands. A warm start is recorded like a round
       and stored once; on a provably fair operator it uses the next nonce of the player's server seed.
 
+    `GET /v1/games` lists the games for the calling operator: RTP per mode, the stakes each of its currencies allows,
+    whether the game is enabled for it, and the display and retirement details an operator's lobby needs. A game
+    that comes in several RTP variants lists each variant as its own `game_id` with its own RTP; enable the one you
+    want.
+
+    ## Free rounds
+    An operator gives a player free rounds by creating a reward with `POST /v1/rewards`: the player, a currency and
+    precision, the games, the number of rounds, the bet of each round and an expiry. The operator chooses the
+    `reward_id`; it is unique per operator, and creating the same reward again is safe (see Idempotency).
+    - The bet must be a valid stake for every game of the reward, in `GET /v1/games` terms: within the currency's
+      `min` and `max` and, for a hold-and-win or pay-anywhere game, one of its `bets`. The stake limits are checked
+      when the reward is created; a later change to them does not affect a reward that exists.
+    - The player plays the rounds in any of the reward's games, in a session of that player, currency and precision,
+      until `expires_at`. `/game/open` lists the session's usable rewards and the game client plays one free round by
+      sending its `reward_id` to `/game/round`. A free round is a normal round at the reward's bet whose stake the
+      operator funds: a `base` round, decided and recorded like any other, with no `/wallet/bet` call. Kill switches
+      apply to it as to a paid round.
+    - Each free round is written once to Polarkast's append-only log when it starts, and a reward never plays more than
+      its `rounds`. Rounds a reward has not used are owed to the player until it expires; then they lapse.
+    - Winnings are credited once per free round, never once per reward: when a free round has been played Polarkast
+      sends one `/wallet/win` carrying the `reward_id`, with `amount` 0 for a round that won nothing, so the operator
+      sees every round used. It is idempotent on its `transaction_id` and retried like every win (see Timeouts and
+      retries), also after the reward expired or was used up: winnings of a round played before expiry always pay out.
+    - `POST /v1/rewards/cancel` cancels a reward only before its first free round has started; after that it is
+      refused and the reward stays.
+    - Fun sessions have no free rounds.
+
     ## Fun mode
     `POST /v1/launch` with `mode: "fun"` (signed as always) launches a game with play money. It needs no player:
     `session_token` and `player_id` are ignored, and Polarkast makes no wallet call of any kind for the session. The
@@ -71,7 +99,8 @@ info:
     - Fun mode: the rate limits above.
 
     ## Transport
-    - HTTPS only. Every request and response body is `application/json` (UTF-8). Every operation is `POST`.
+    - HTTPS only. Every request and response body is `application/json` (UTF-8). Every operation is `POST`, except
+      `GET /v1/games`, whose request has no body.
     - Unknown request fields are ignored. Missing required fields, wrong types or out-of-range values are `INVALID_REQUEST`.
     - A successful call is HTTP 200 with the documented body. Any failure is an error body (see Errors).
 
@@ -110,7 +139,9 @@ info:
     (the secret's UTF-8 bytes, used as-is). Nothing else is signed: not the path, headers or query. The receiver
     computes the HMAC over the raw bytes it received (before any JSON parsing), compares it in constant time, and
     rejects a mismatch with `INVALID_SIGNATURE` before doing anything else. Responses are not signed.
-    Requests to `/v1/launch` and `/v1/round` also carry `X-Operator-Id` (issued by Polarkast) so the secret can be found.
+    Requests to `/v1/launch`, `/v1/round`, `/v1/games`, `/v1/rewards` and `/v1/rewards/cancel` also carry
+    `X-Operator-Id` (issued by Polarkast) so the secret can be found. `GET /v1/games` has no body, so its signature is
+    the HMAC of zero bytes: the same value on every call, until the secret is rotated. It grants only that read.
 
     ## Idempotency
     Every money call (`bet`, `win`, `rollback`) is identified by its `transaction_id`, unique per operator across all
@@ -146,6 +177,12 @@ info:
       names, and no existing code fits better (`INVALID_REQUEST` is for a malformed request, and this one is
       well-formed). Nothing moves and the id is not recorded as rolled back. Being a definitive error on a
       well-formed request, it is stored and replayed like any other.
+    - Rewards: `POST /v1/rewards` is idempotent on `reward_id`, a namespace of its own per operator. The first call
+      creates the reward. Repeating it with the same body creates nothing and returns the reward as it stands now
+      (its `status`, `rounds_used` and `win` may have moved on). "The same body" compares the fields of
+      `RewardRequest` by value, `game_ids` as a set (order and repeats do not matter) and `expires_at` as an instant.
+      The same `reward_id` with any of them different is `TRANSACTION_MISMATCH`. A create that is refused creates
+      nothing and does not use up its `reward_id`.
 
     ## Win and rollback checks (session, player)
     `win` and `rollback` never check the session token for validity or expiry: an unknown, expired or other player's
@@ -297,7 +334,7 @@ paths:
         started, free spins added, the cap reached) and how to replay it: the draws, in the order they were used,
         reproduce the round on the game and engine versions the page names; on a provably fair round, the revealed
         server seed, the client seed and the nonce reproduce the draws. Fun rounds are not recorded and are never
-        found.
+        found. A free round (see Free rounds) has `reward_id`, no bet transaction, only its win, and a `cost` of 0.
       parameters:
         - name: X-Operator-Id
           in: header
@@ -363,6 +400,193 @@ paths:
         '401': { $ref: '#/components/responses/InvalidSignature' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/InternalError' }
+  /v1/games:
+    get:
+      tags: [studio]
+      operationId: games
+      summary: The game catalog for this operator
+      description: |
+        Called by the operator to import Polarkast's games and keep them in sync, for example once a day. Requires
+        `X-Operator-Id` and `X-Signature`, the HMAC of the empty body (see Signing). Moves no money; safe to repeat.
+        Lists every game Polarkast offers that has an RTP, whether or not it is enabled for this operator, ordered by
+        `game_id`. Each RTP variant of a game is its own `game_id` with its own `rtp`. The RTP comes from the game's
+        math, the same source its certification uses: a weighted game's from its outcome table, a hold-and-win or
+        pay-anywhere game's from the verified simulation of each mode. A game without an RTP is not listed.
+        `enabled` says whether this operator can launch the game now. `stakes` has one entry per currency enabled for
+        the operator, with the limits `/v1/launch` and `/game/round` apply; a reward's `bet` must be valid in them (see
+        Free rounds). A game being retired has an `end_date` while it is still listed.
+      parameters:
+        - name: X-Operator-Id
+          in: header
+          required: true
+          description: Operator identifier issued by Polarkast. Selects the shared secret used to verify `X-Signature`.
+          schema: { type: string }
+          example: op_demo
+      responses:
+        '200':
+          description: The catalog.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GamesResponse' }
+              examples:
+                ok:
+                  value:
+                    games:
+                      - game_id: four-star-dragons
+                        version: 1
+                        name: 4 Star Dragons
+                        category: slots
+                        rtp: 9399
+                        modes:
+                          - { mode: base, cost_x100: 100, rtp: 9399 }
+                          - { mode: buy, cost_x100: 5000, rtp: 9399 }
+                        enabled: true
+                        platforms: [desktop, mobile]
+                        stakes:
+                          - { currency: EUR, precision: 2, min: 10, max: 1000000, bets: [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000] }
+                        freebet_support: false
+                        blocked_countries: []
+                        thumbnails: ['https://polarkast.tech/four-star-dragons-card.webp']
+                        release_date: '2026-11-26'
+                        hit_rate: 2723
+                        max_win_x100: 500000
+                        features: [hold_and_win, buy]
+                      - game_id: stub
+                        version: 1
+                        name: Stub
+                        category: test
+                        rtp: 9600
+                        modes:
+                          - { mode: base, cost_x100: 100, rtp: 9600 }
+                        enabled: true
+                        platforms: []
+                        stakes:
+                          - { currency: EUR, precision: 2, min: 10, max: 1000000 }
+                        freebet_support: true
+                        blocked_countries: [US]
+                        thumbnails: []
+                        release_date: '2026-11-25'
+                        end_date: '2027-06-30'
+                        hit_rate: 5000
+                        max_win_x100: 1600
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/InternalError' }
+  /v1/rewards:
+    post:
+      tags: [studio]
+      operationId: createReward
+      summary: Give a player free rounds
+      description: |
+        Requires `X-Operator-Id` and `X-Signature`, verified before the body is parsed. Creates a reward (see Free
+        rounds), idempotent on `reward_id` (see Idempotency). Makes no wallet call: no money moves until a free round
+        has been played. A repeat of a reward that exists returns it even if a setting has changed since. A new
+        reward is refused, and nothing is created, when:
+        - the operator is suspended (`OPERATOR_SUSPENDED`);
+        - a game is not enabled for the operator or is switched off, or the currency and precision are not enabled
+          for it (`NOT_AVAILABLE`);
+        - a game is unknown or has no `freebet_support`, the `bet` is not a valid stake for every game (see Free
+          rounds), or `expires_at` is not in the future or is more than 366 days ahead (`INVALID_REQUEST`).
+      parameters:
+        - name: X-Operator-Id
+          in: header
+          required: true
+          description: Operator identifier issued by Polarkast. Selects the shared secret used to verify `X-Signature`.
+          schema: { type: string }
+          example: op_demo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RewardRequest' }
+            examples:
+              ok:
+                value:
+                  reward_id: welcome-42
+                  player_id: player-42
+                  currency: EUR
+                  precision: 2
+                  game_ids: [stub]
+                  rounds: 10
+                  bet: 100
+                  expires_at: '2026-12-31T23:59:59Z'
+      responses:
+        '200':
+          description: The reward, created now or earlier.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reward' }
+              examples:
+                ok:
+                  value:
+                    reward_id: welcome-42
+                    player_id: player-42
+                    currency: EUR
+                    precision: 2
+                    game_ids: [stub]
+                    rounds: 10
+                    bet: 100
+                    expires_at: '2026-12-31T23:59:59.000Z'
+                    status: active
+                    rounds_used: 0
+                    win: 0
+                    created_at: '2026-12-01T09:00:00.000Z'
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '403': { $ref: '#/components/responses/RewardForbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/InternalError' }
+  /v1/rewards/cancel:
+    post:
+      tags: [studio]
+      operationId: cancelReward
+      summary: Cancel a reward before its first free round
+      description: |
+        Requires `X-Operator-Id` and `X-Signature`, verified before the body is parsed. Cancels the reward: no free
+        round can start from it afterwards. Only before its first free round has started; after that it is
+        `INVALID_REQUEST` and the reward is unchanged. Cancelling a cancelled reward returns it as it is. An unknown
+        `reward_id`, or one of another operator, is `INVALID_REQUEST`. Works while the operator is suspended. Makes no
+        wallet call. The response is the reward as it stands.
+      parameters:
+        - name: X-Operator-Id
+          in: header
+          required: true
+          description: Operator identifier issued by Polarkast. Selects the shared secret used to verify `X-Signature`.
+          schema: { type: string }
+          example: op_demo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RewardCancelRequest' }
+            examples:
+              ok: { value: { reward_id: welcome-42 } }
+      responses:
+        '200':
+          description: The reward, cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reward' }
+              examples:
+                ok:
+                  value:
+                    reward_id: welcome-42
+                    player_id: player-42
+                    currency: EUR
+                    precision: 2
+                    game_ids: [stub]
+                    rounds: 10
+                    bet: 100
+                    expires_at: '2026-12-31T23:59:59.000Z'
+                    status: cancelled
+                    rounds_used: 0
+                    win: 0
+                    created_at: '2026-12-01T09:00:00.000Z'
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidSignature' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/InternalError' }
   /game/open:
     post:
       tags: [game]
@@ -380,6 +604,7 @@ paths:
         carries the pots at the opening play amount (`pots`, warm-started if the player has never used it, see Games).
         A bought or ante round is possible at a play amount whose cost is at most `stake_limits.max`, and an ante round
         only where its cost is a whole number of minor units (see Games).
+        A money session also carries `rewards`: the player's rewards this session can play now (see Free rounds).
       security: []
       requestBody:
         required: true
@@ -405,6 +630,8 @@ paths:
                     balance: 100000
                     lobby_url: https://casino.example/lobby
                     currency_symbol: '€'
+                    rewards:
+                      - { reward_id: welcome-42, bet: 100, rounds: 10, rounds_left: 7, expires_at: '2026-12-31T23:59:59.000Z', win: 250 }
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 0
@@ -442,6 +669,7 @@ paths:
                     bet: 100
                     pots: [12, 29, 4, 21]
                     stake_limits: { min: 10, max: 1000000 }
+                    rewards: []
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 1
@@ -476,6 +704,7 @@ paths:
                     bets: [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]
                     bet: 100
                     stake_limits: { min: 10, max: 1000000 }
+                    rewards: []
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 0
@@ -546,7 +775,15 @@ paths:
         and the win split (`baseWin`, `freeWin`). `force_outcome` is not available (`INVALID_REQUEST`).
         `ante` in any other game, and `buy` in a weighted game, is `INVALID_REQUEST`.
         Fun sessions: the same, against the session's play-money balance with no wallet call; more than the fun round
-        rate limit is `RATE_LIMITED`.
+        rate limit is `RATE_LIMITED`. A `reward_id` in a fun session is `INVALID_REQUEST`.
+        Free rounds (see Free rounds): with `reward_id`, the round is one free round of that reward. `bet` must be the
+        reward's bet and `mode` `base` or absent. There is no wallet bet and the stake limits are not applied again;
+        the kill switches are. Before a new `request_id` is taken, the round is refused with `INVALID_REQUEST` when the
+        reward is unknown to this operator, is another player's, is in another currency or precision, does not
+        include this game, is cancelled or expired, or has no rounds left; the same refusal comes, and nothing is
+        played or kept, when the reward stops being usable before the round starts. The same `request_id` with
+        another `reward_id`, or without one, is `TRANSACTION_MISMATCH`. The response's `cost` is 0 and its `reward`
+        says what is left. A failed win of a free round never gives the round back to the reward.
       security: []
       requestBody:
         required: true
@@ -557,6 +794,7 @@ paths:
               forced_win: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r1, bet: 100, force_outcome: 2 } }
               bought: { value: { game_session_id: 2c7d1e90-6a3b-4f58-8e21-9d0c4b7a5f13, request_id: r7, bet: 100, mode: buy } }
               ante: { value: { game_session_id: 6d2b9f41-0e7a-4c35-b8d1-3a9e5c7f0b24, request_id: r3, bet: 100, mode: ante } }
+              free_round: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r2, bet: 100, reward_id: welcome-42 } }
       responses:
         '200':
           description: Round played and settled.
@@ -572,6 +810,7 @@ paths:
               schema: { $ref: '#/components/schemas/GameRoundResponse' }
               examples:
                 forced_win: { value: { round_id: 5b1d3c7e-2a64-4f08-8c19-7e3a9d4b6f21, outcome_index: 2, payout: 200, balance: 100100 } }
+                free_round: { value: { round_id: 4a8c2e61-9d3b-4f07-a5e2-1c6b0d8f3a94, outcome_index: 1, payout: 100, balance: 100200, reward: { reward_id: welcome-42, rounds_left: 6, win: 350 } } }
                 hold_and_win:
                   summary: A base round with one line win; Ember's coin feeds Ember (pot 0) from 12 to 13
                   value:
@@ -705,6 +944,9 @@ paths:
         (the token is then not checked, see Win and rollback checks; `player_id`, currency and precision must still
         match the player: unknown `player_id` is `INVALID_REQUEST`, a different currency or precision is
         `CURRENCY_MISMATCH`).
+        A win with `reward_id` closes a free round (see Free rounds): its `round_id` has no bet, and `amount` is the
+        round's winnings, which the operator funds from that reward. The operator credits it like any win, whether or
+        not the reward has expired or been used up since; Polarkast checked the reward before the round was played.
       requestBody:
         required: true
         content:
@@ -731,6 +973,17 @@ paths:
                   amount: 0
                   currency: EUR
                   precision: 2
+              free_round:
+                value:
+                  transaction_id: 7e3b9d15-4c2a-4f86-b0d7-2a9e6c1f5b38
+                  round_id: 4a8c2e61-9d3b-4f07-a5e2-1c6b0d8f3a94
+                  player_id: player-42
+                  game_id: stub
+                  session_token: sess_8f3a
+                  amount: 100
+                  currency: EUR
+                  precision: 2
+                  reward_id: welcome-42
       responses:
         '200':
           description: Payout credited (or the original response of an identical earlier call).
@@ -911,6 +1164,9 @@ components:
           items: { $ref: '#/components/schemas/RoundTransaction' }
         hold_and_win: { $ref: '#/components/schemas/HoldAndWinRound' }
         pay_anywhere: { $ref: '#/components/schemas/PayAnywhereRound' }
+        reward_id:
+          $ref: '#/components/schemas/Id'
+          description: Present only for a free round (see Free rounds), which has no bet transaction.
     PayAnywhereRound:
       type: object
       description: Pay-anywhere rounds only; absent for other games.
@@ -919,8 +1175,8 @@ components:
         mode: { $ref: '#/components/schemas/RoundMode' }
         bet: { $ref: '#/components/schemas/PositiveAmount' }
         cost:
-          $ref: '#/components/schemas/PositiveAmount'
-          description: The amount debited, the bet transaction's `amount`.
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited, the bet transaction's `amount`; 0 for a free round.
         win_x100:
           type: object
           description: The win split, in hundredths of the play amount. The payout is `floor(bet * (base + free) / 100)`.
@@ -936,8 +1192,8 @@ components:
         mode: { $ref: '#/components/schemas/RoundMode' }
         bet: { $ref: '#/components/schemas/PositiveAmount' }
         cost:
-          $ref: '#/components/schemas/PositiveAmount'
-          description: The amount debited, the bet transaction's `amount`.
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited, the bet transaction's `amount`; 0 for a free round.
         win_x100:
           type: object
           description: The win split, in hundredths of the play amount. The payout is `floor(bet * (lines + collect + bonus) / 100)`.
@@ -1015,6 +1271,9 @@ components:
         brand:
           $ref: '#/components/schemas/Id'
           description: Optional; present only when the launch had a `brand` (see Brand). Not part of the idempotency body comparison.
+        reward_id:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only for the win of a free round, the operator's `reward_id` (see Free rounds). Part of the idempotency body comparison.
     RollbackRequest:
       type: object
       required: [transaction_id, bet_transaction_id, round_id, player_id, game_id, session_token]
@@ -1076,6 +1335,13 @@ components:
           type: integer
           minimum: 0
           description: Provably fair operators only. The nonce the next round will use.
+        rewards:
+          type: array
+          description: |
+            Money sessions only; absent for a fun session, empty when there are none. The session player's rewards that
+            this session can play now: its game is one of the reward's games, its currency and precision are the
+            reward's, and the reward is neither cancelled nor expired and has rounds left. Soonest `expires_at` first.
+          items: { $ref: '#/components/schemas/OpenReward' }
         game:
           description: Hold-and-win and pay-anywhere games only. The display model; `kind` tells the families apart.
           oneOf:
@@ -1103,6 +1369,18 @@ components:
           properties:
             min: { $ref: '#/components/schemas/PositiveAmount' }
             max: { $ref: '#/components/schemas/PositiveAmount' }
+    OpenReward:
+      type: object
+      required: [reward_id, bet, rounds, rounds_left, expires_at, win]
+      properties:
+        reward_id: { $ref: '#/components/schemas/Id' }
+        bet:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The bet of each free round; send it as `/game/round`'s `bet` with the `reward_id`.
+        rounds: { type: integer, minimum: 1, description: 'The reward''s free rounds in all.' }
+        rounds_left: { type: integer, minimum: 1, description: Free rounds not yet started. }
+        expires_at: { type: string, format: date-time }
+        win: { $ref: '#/components/schemas/Amount', description: 'The winnings of the reward''s rounds so far, in minor units.' }
     GamePotsRequest:
       type: object
       required: [game_session_id, bet]
@@ -1131,6 +1409,9 @@ components:
           type: integer
           minimum: 0
           description: Sandbox operators and weighted games only. Index into the game's outcome table (the `stub` game has 0 to 4).
+        reward_id:
+          $ref: '#/components/schemas/Id'
+          description: Optional. Plays one free round of this reward, one of `/game/open`'s `rewards` (see Free rounds).
     GameRoundResponse:
       description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win` or `pay_anywhere`). Their required fields differ, so a response matches only its own."
       anyOf:
@@ -1145,6 +1426,15 @@ components:
         outcome_index: { type: integer, minimum: 0 }
         payout: { $ref: '#/components/schemas/Amount' }
         balance: { $ref: '#/components/schemas/Amount' }
+        reward: { $ref: '#/components/schemas/RoundReward' }
+    RoundReward:
+      type: object
+      description: Free rounds only (see Free rounds); absent for a paid round.
+      required: [reward_id, rounds_left, win]
+      properties:
+        reward_id: { $ref: '#/components/schemas/Id' }
+        rounds_left: { type: integer, minimum: 0, description: 'The reward''s free rounds not yet started, after this one.' }
+        win: { $ref: '#/components/schemas/Amount', description: 'The winnings of the reward''s rounds so far, this one included, in minor units.' }
     HoldAndWinRoundResponse:
       type: object
       required: [round_id, mode, bet, cost, payout, balance, script]
@@ -1153,13 +1443,14 @@ components:
         mode: { $ref: '#/components/schemas/RoundMode' }
         bet: { $ref: '#/components/schemas/PositiveAmount' }
         cost:
-          $ref: '#/components/schemas/PositiveAmount'
-          description: The amount debited by the wallet bet.
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited by the wallet bet; 0 for a free round.
         payout:
           $ref: '#/components/schemas/Amount'
           description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
         balance: { $ref: '#/components/schemas/Amount' }
         script: { $ref: '#/components/schemas/HoldAndWinScript' }
+        reward: { $ref: '#/components/schemas/RoundReward' }
     PayAnywhereRoundResponse:
       type: object
       required: [round_id, mode, bet, cost, payout, balance, script]
@@ -1168,13 +1459,14 @@ components:
         mode: { $ref: '#/components/schemas/RoundMode' }
         bet: { $ref: '#/components/schemas/PositiveAmount' }
         cost:
-          $ref: '#/components/schemas/PositiveAmount'
-          description: The amount debited by the wallet bet.
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited by the wallet bet; 0 for a free round.
         payout:
           $ref: '#/components/schemas/Amount'
           description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
         balance: { $ref: '#/components/schemas/Amount' }
         script: { $ref: '#/components/schemas/PayAnywhereScript' }
+        reward: { $ref: '#/components/schemas/RoundReward' }
     RoundMode:
       type: string
       enum: [base, ante, buy]
@@ -1535,6 +1827,148 @@ components:
             spinsLeft: { type: integer, minimum: 0, description: Free spins left after this one; 0 on a spin that reached `cap`. }
             total: { type: integer, minimum: 0, description: The free spins' win so far. }
             capped: { type: boolean, description: This spin reached `cap`; the feature ends with it. }
+    GamesResponse:
+      type: object
+      required: [games]
+      properties:
+        games:
+          type: array
+          description: Ordered by `game_id`.
+          items: { $ref: '#/components/schemas/CatalogGame' }
+    CatalogGame:
+      type: object
+      description: One game of the catalog, for the calling operator. RTP and rates are in basis points (9400 is 94.00%).
+      required: [game_id, version, name, category, rtp, modes, enabled, platforms, stakes, freebet_support, blocked_countries, thumbnails, release_date]
+      properties:
+        game_id:
+          $ref: '#/components/schemas/Id'
+          description: An RTP variant of a game is a game of its own, with its own `game_id`.
+        version: { type: integer, minimum: 1, description: The game's version; rounds record it. }
+        name: { type: string }
+        category:
+          type: string
+          description: '`slots`, or `test` for the sandbox''s test game. Other categories may be added; treat one you do not know as `slots`.'
+        rtp: { type: integer, minimum: 0, description: 'The return of a `base` round, from the game''s math.' }
+        modes:
+          type: array
+          description: The round modes the game offers (see Games), `base` first.
+          minItems: 1
+          items:
+            type: object
+            required: [mode, cost_x100, rtp]
+            properties:
+              mode: { $ref: '#/components/schemas/RoundMode' }
+              cost_x100: { type: integer, minimum: 1, description: 'What a round of this mode costs, in hundredths of the play amount: 100 for `base`, else the display model''s `buyCost` or `anteCost`.' }
+              rtp: { type: integer, minimum: 0, description: 'The return of a round of this mode, from the game''s math.' }
+        enabled:
+          type: boolean
+          description: The operator can launch the game now; false when it is not enabled for this operator or is switched off.
+        platforms:
+          type: array
+          description: Where the game client plays. Empty for a game without a client (the test game, played through the game API).
+          items: { type: string, enum: [desktop, mobile] }
+        stakes:
+          type: array
+          description: One per currency enabled for the operator, ordered by currency; empty when there are none.
+          items: { $ref: '#/components/schemas/CatalogStake' }
+        freebet_support: { type: boolean, description: The game plays free rounds; a reward may name it (see Free rounds). }
+        blocked_countries:
+          type: array
+          description: ISO 3166-1 alpha-2 codes, sorted. A launch with one of them as `country` is `NOT_AVAILABLE`.
+          items: { type: string, pattern: '^[A-Z]{2}$' }
+        thumbnails:
+          type: array
+          description: Images of the game for a lobby; may be empty.
+          items: { type: string, format: uri }
+        release_date: { type: string, format: date }
+        end_date:
+          type: string
+          format: date
+          description: Only for a game being retired. The last day it is offered; Polarkast switches it off after that day and it is no longer listed.
+        volatility: { type: string, enum: [low, medium, high], description: Optional. }
+        hit_rate: { type: integer, minimum: 0, maximum: 10000, description: 'Optional. The share of `base` rounds that win anything.' }
+        max_win_x100: { type: integer, minimum: 1, description: 'Optional. The most one round pays, in hundredths of the play amount (500000 is 5,000 times).' }
+        features:
+          type: array
+          description: Optional. Short labels of what the game has, for example `hold_and_win`, `free_spins` or `buy`.
+          items: { type: string }
+    CatalogStake:
+      type: object
+      required: [currency, precision, min, max]
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+        min:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The operator's minimum stake for the currency, in minor units. Stake limits apply to what a round debits.
+        max:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The operator's maximum stake for the currency, in minor units.
+        bets:
+          type: array
+          description: |
+            Hold-and-win and pay-anywhere games only. The play amounts a session in this currency offers, as
+            `/game/open`'s `bets`. A reward's `bet` for this game must be one of them.
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/PositiveAmount' }
+    RewardRequest:
+      type: object
+      required: [reward_id, player_id, currency, precision, game_ids, rounds, bet, expires_at]
+      properties:
+        reward_id:
+          $ref: '#/components/schemas/Id'
+          description: Chosen by the operator; unique per operator. The idempotency key of the create (see Idempotency).
+        player_id:
+          $ref: '#/components/schemas/Id'
+          description: The player, as `/wallet/authenticate` returns it. Polarkast does not call the wallet to check it.
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+        game_ids:
+          type: array
+          description: The games the free rounds can be played in; every one enabled for the operator and with `freebet_support`.
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/Id' }
+        rounds: { type: integer, minimum: 1, maximum: 1000, description: The number of free rounds. }
+        bet:
+          $ref: '#/components/schemas/PositiveAmount'
+          description: The bet of each free round in minor units, a valid stake for every game (see Free rounds); a hold-and-win or pay-anywhere round's play amount.
+        expires_at:
+          type: string
+          format: date-time
+          description: In the future and at most 366 days ahead. Rounds not started by then lapse.
+    RewardCancelRequest:
+      type: object
+      required: [reward_id]
+      properties:
+        reward_id: { $ref: '#/components/schemas/Id' }
+    Reward:
+      type: object
+      description: A reward as it stands. `game_ids` is sorted, without repeats.
+      required: [reward_id, player_id, currency, precision, game_ids, rounds, bet, expires_at, status, rounds_used, win, created_at]
+      properties:
+        reward_id: { $ref: '#/components/schemas/Id' }
+        player_id: { $ref: '#/components/schemas/Id' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        precision: { $ref: '#/components/schemas/Precision' }
+        game_ids: { type: array, items: { $ref: '#/components/schemas/Id' } }
+        rounds: { type: integer, minimum: 1, maximum: 1000 }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        expires_at: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [active, used, expired, cancelled]
+          description: |
+            - `active`: rounds left, not expired.
+            - `used`: every free round has started.
+            - `expired`: `expires_at` has passed with rounds left; they lapsed.
+            - `cancelled`: cancelled before its first free round.
+        rounds_used: { type: integer, minimum: 0, description: Free rounds started. }
+        win:
+          $ref: '#/components/schemas/Amount'
+          description: The winnings of its free rounds so far in minor units, credited or still being sent.
+        created_at: { type: string, format: date-time }
     ErrorCode:
       type: string
       description: |
@@ -1542,7 +1976,9 @@ components:
         - `INVALID_REQUEST` (400): body is not valid JSON, a field is missing, has the wrong type or is out of range
           (including an amount above 2^53-1 or a bet of 0), the game is unknown, or on `win` and `rollback` the
           `player_id` is unknown or not the bet's player, on `/v1/round` the round or transaction is unknown to this
-          operator, or a number is not an integer literal (`100.0`, `1e2`).
+          operator, on `/v1/rewards` a game is unknown or has no free rounds or the bet is not a valid stake for every
+          game, on `/v1/rewards/cancel` the reward is unknown or has started, on `/game/round` the `reward_id` cannot
+          be played (see Free rounds), or a number is not an integer literal (`100.0`, `1e2`).
           Fix: correct the request to match
           this spec. Not retryable.
         - `INVALID_SIGNATURE` (401): `X-Signature` is missing or does not match the HMAC-SHA256 of the raw body. Fix:
@@ -1554,16 +1990,17 @@ components:
           must deposit or choose a lower stake. Not retryable.
         - `CURRENCY_MISMATCH` (422): `currency` or `precision` differs from the session's. Fix: send the currency and
           precision returned by `/wallet/authenticate`, unchanged. Not retryable.
-        - `TRANSACTION_MISMATCH` (409): the `transaction_id` was already used with a different body or call type.
+        - `TRANSACTION_MISMATCH` (409): the `transaction_id` was already used with a different body or call type, or
+          the `reward_id` with a different reward.
           Fix: a new operation needs a new `transaction_id`; a retry must be byte-for-byte the same body. Not retryable.
         - `TRANSACTION_ROLLED_BACK` (409): bet only; a rollback already references this `transaction_id`. Nothing was
           debited. Fix: do not retry; the round is over. Not retryable.
-        - `NOT_AVAILABLE` (403): launch, and a new `/game/round`. The `game_id` is not enabled for this operator, is
+        - `NOT_AVAILABLE` (403): launch, a new `/game/round` and `/v1/rewards`. The `game_id` is not enabled for this operator, is
           switched off, or is blocked in the request's `country`; the `brand` is not registered for this operator; or
           the session's currency and precision are not enabled for this operator. Fix: launch another game, or ask your Polarkast contact to
           enable the game, register the brand or enable the currency and precision. Not retryable until Polarkast changes
           the setting.
-        - `OPERATOR_SUSPENDED` (403): launch, and a new `/game/round`. Polarkast has suspended this operator. Fix: contact Polarkast; no
+        - `OPERATOR_SUSPENDED` (403): launch, a new `/game/round` and `/v1/rewards`. Polarkast has suspended this operator. Fix: contact Polarkast; no
           launch succeeds until it is resumed. Rounds already open still settle through the wallet. Not retryable.
         - `RATE_LIMITED` (429): fun mode only, from Polarkast; a wallet never returns it. More fun launches or fun
           rounds than the limits in Fun mode; nothing changed. Fix: retry after a minute (launch) or a second (round).
@@ -1656,6 +2093,16 @@ components:
           examples:
             invalid_session:
               value: { error: { code: INVALID_SESSION, message: 'Session token is unknown or expired; issue a new session token and launch again.' } }
+            not_available:
+              value: { error: { code: NOT_AVAILABLE, message: 'Game four-star-dragons is not available to this operator; choose another game or ask Polarkast to enable it.' } }
+            operator_suspended:
+              value: { error: { code: OPERATOR_SUSPENDED, message: 'This operator is suspended; contact Polarkast.' } }
+    RewardForbidden:
+      description: '`NOT_AVAILABLE` or `OPERATOR_SUSPENDED`, both HTTP 403.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
             not_available:
               value: { error: { code: NOT_AVAILABLE, message: 'Game four-star-dragons is not available to this operator; choose another game or ask Polarkast to enable it.' } }
             operator_suspended:
