@@ -13,7 +13,7 @@ A human signs in to the client area at `https://client.polarkast.tech` with thei
 
 You register your sandbox wallet's base URL, and every later change to it, in the client area (Integration, Wallet URL): the sandbox calls only the URL registered for your operator. It must be `https://` and resolve to a public address; loopback, private, link-local, CGNAT and cloud-metadata addresses are refused, both when you save it and on every call, and redirects are not followed. A quick-tunnel URL changes every run, so save the new one each time before you launch. Never invent these values; if you lack them, stop and ask a human to create the operator and read out the secret.
 
-A new operator has the game `stub` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units). Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
+A new operator has the games `stub` and `four-star-dragons` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units). Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
 
 The sandbox game is `stub`. Its outcomes are deterministic when forced (`force_outcome` works only in the sandbox):
 
@@ -60,7 +60,7 @@ Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A 
 Check: after each round, your wallet's balance changed by exactly `-bet + payout` (win: +100, loss: -100 for bet 100), and the `balance` in the response equals your wallet's balance.
 
 ## 6. Play 4 Star Dragons
-Once `four-star-dragons` is enabled for your operator, launch it as in step 4 with `"game_id":"four-star-dragons"` and open `game_url` in a browser: that is the real game, playing against your wallet. Without a browser, `/game/open` also returns the play amounts (`bets`), the opening play amount (`bet`) and the player's pots; then play a base round and a bought round (there is no `force_outcome` for this game):
+Launch `four-star-dragons` as in step 4 with `"game_id":"four-star-dragons"` and open `game_url` in a browser: that is the real game, playing against your wallet. Without a browser, `/game/open` also returns the play amounts (`bets`), the opening play amount (`bet`) and the player's pots; then play a base round and a bought round (there is no `force_outcome` for this game):
 
 ```sh
 curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/json' \
