@@ -38,6 +38,11 @@ Check: the response lists `stub` with `rtp` 9600.
 Call the signed `POST /v1/round` to get a round's transactions with their status and a link to a round page. See [rounds.md](rounds.md).
 Check: looking up a sandbox round by its id lists its bet and win as `succeeded`.
 
+## Afterwards: give a player free rounds
+
+Call the signed `POST /v1/rewards`; your wallet then sees a `/wallet/win` with `reward_id` and no bet for each free round. See [freebets.md](freebets.md).
+Check: the sandbox plays a free round and your wallet sees no bet and one win carrying the `reward_id`.
+
 ## What stays human
 
 Do not do these; stop and ask a person:

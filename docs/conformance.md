@@ -37,7 +37,7 @@ export POLARKAST_SHARED_SECRET=<from your secrets store>   # read when --secret 
 `--secret <secret>` also works but shows the secret in the process list; prefer the variable.
 
 ## Read the result
-- It prints PASS, FAIL or SKIP per check: duplicates, retries, rollbacks (including unknown, late and refused bets, and a rollback naming a win or rollback), insufficient funds, bad signature, currency and precision mismatch, another player's token on bet, unknown player and session token on win and rollback, stored errors replayed, malformed requests not stored, unknown fields ignored, `100.0` and `1e2` rejected, expired session for win and rollback.
+- It prints PASS, FAIL or SKIP per check: duplicates, retries, rollbacks (including unknown, late and refused bets, and a rollback naming a win or rollback), insufficient funds, bad signature, currency and precision mismatch, another player's token on bet, a win with `reward_id` and no bet (credited, replayed, a different `reward_id` refused), unknown player and session token on win and rollback, stored errors replayed, malformed requests not stored, unknown fields ignored, `100.0` and `1e2` rejected, expired session for win and rollback.
 - For each failure it prints the request sent, the expected and the actual result, and the fix.
 - SKIP means not verified: the check did not run (no `--expired-session-token`). A skipped check proves nothing. A go-live needs zero skips as well as zero failures.
 - Exit code 0 only when no check fails.

@@ -64,6 +64,9 @@ const schemas: Record<string, Record<string, Kind>> = {
   win: { ...base, ...money },
   rollback: { ...base, bet_transaction_id: "id" },
 };
+// Optional fields: checked when present, and part of the idempotency body comparison. `reward_id` closes a free
+// round (spec "Free rounds"): a win that has no bet.
+const optional: Record<string, Record<string, Kind>> = { win: { reward_id: "id" } };
 
 // Spec "Money": a number counts only when written as an integer literal. The reviver sees the source text.
 export function parseJson(text: string): unknown {
@@ -71,11 +74,14 @@ export function parseJson(text: string): unknown {
     typeof v === "number" && !/^-?\d+$/.test(ctx?.source ?? String(v)) ? ctx?.source : v);
 }
 
-function validate(schema: Record<string, Kind>, body: unknown): Resp | null {
+function validate(schema: Record<string, Kind>, body: unknown, opt: Record<string, Kind> = {}): Resp | null {
   if (typeof body !== "object" || body === null || Array.isArray(body))
     return err(400, "INVALID_REQUEST", "Body must be a JSON object; send valid JSON as in the spec.");
   for (const [f, kind] of Object.entries(schema))
     if (!checks[kind]((body as Body)[f]))
+      return err(400, "INVALID_REQUEST", `${f} is missing or not a valid ${kind}; fix it as the spec defines. Amounts are integers of minor units up to ${MAX}.`);
+  for (const [f, kind] of Object.entries(opt))
+    if (Object.hasOwn(body, f) && !checks[kind]((body as Body)[f]))
       return err(400, "INVALID_REQUEST", `${f} is missing or not a valid ${kind}; fix it as the spec defines. Amounts are integers of minor units up to ${MAX}.`);
   return null;
 }
@@ -99,7 +105,7 @@ export function createApp(secret: string, store: Store = seedStore()) {
   // Everything here is synchronous, so check-then-write cannot interleave with another request.
   function once(kind: string, b: Body, exec: () => Resp): Resp {
     const id = b.transaction_id;
-    const fp = kind + JSON.stringify(Object.keys(schemas[kind]).map((f) => b[f]));
+    const fp = kind + JSON.stringify(Object.keys({ ...schemas[kind], ...optional[kind] }).map((f) => b[f]));
     const prior = txs.get(id);
     if (prior && prior.fp !== fp) return mismatch();
     if (kind === "bet" && rolledBack.has(id)) return rolledBackErr(); // late or replayed bet
@@ -129,6 +135,7 @@ export function createApp(secret: string, store: Store = seedStore()) {
     }),
     win: (b) => once("win", b, () => {
       // Session token deliberately not checked: win must be accepted after expiry.
+      // With `reward_id` this closes a free round: there is no bet to look up, `amount` is credited like any win.
       const p = players.get(b.player_id);
       if (!p) return unknownPlayer();
       if (b.currency !== p.currency || b.precision !== p.precision) return wrongCurrency(p);
@@ -164,7 +171,7 @@ export function createApp(secret: string, store: Store = seedStore()) {
     else {
       let body: unknown;
       try { body = parseJson(raw.toString("utf8")); } catch { body = undefined; }
-      r = validate(schemas[op], body) ?? handlers[op](body as Body);
+      r = validate(schemas[op], body, optional[op]) ?? handlers[op](body as Body);
     }
     res.status(r.status).json(r.body);
   });

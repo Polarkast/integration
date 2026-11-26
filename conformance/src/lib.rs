@@ -168,6 +168,11 @@ impl Ctx<'_> {
     fn win(&self, id: &str, amount: i64) -> Value {
         self.bet(id, amount)
     }
+    fn reward_win(&self, id: &str, amount: i64, reward_id: &str) -> Value {
+        let mut w = self.win(id, amount);
+        w["reward_id"] = json!(reward_id);
+        w
+    }
     fn rollback(&self, id: &str, bet_id: &str) -> Value {
         json!({"transaction_id": id, "bet_transaction_id": bet_id, "round_id": self.id(), "player_id": self.player,
                "game_id": "conformance", "session_token": self.token, "brand": BRAND})
@@ -418,6 +423,37 @@ pub fn run(
             b0,
             "Win: an `amount` of 0 closes a losing round, is HTTP 200 and moves no money.",
         )
+    });
+    // A free round has no bet: its win (the spec's "Free rounds") carries the operator's `reward_id`.
+    c.run("win with a reward_id and no bet credits the payout", |c| {
+        let b0 = c.bal()?;
+        c.money_ok(
+            "/wallet/win",
+            &c.reward_win(&c.id(), 250, &c.id()),
+            b0 + 250,
+            "Free rounds: a win with `reward_id` closes a round that has no bet; the operator credits `amount` like any win and returns the new balance.",
+        )
+    });
+    c.run("duplicate win with a reward_id returns the original response and moves no money", |c| {
+        let fix = "Idempotency: a win with `reward_id` is idempotent on its transaction_id like any win: the same body returns the original response and moves no money.";
+        let b0 = c.bal()?;
+        let body = c.reward_win(&c.id(), 250, &c.id());
+        let first = c.post("/wallet/win", &body);
+        first.ok(&c.cur, c.prec, fix)?;
+        let again = c.post("/wallet/win", &body);
+        if again.status != first.status || again.body != first.body {
+            return Err(again.fail(format!("the original response: {} {}", first.status, first.text), fix));
+        }
+        c.bal_is(b0 + 250, fix)
+    });
+    c.run("same win transaction id with another reward_id is TRANSACTION_MISMATCH", |c| {
+        let fix = "Idempotency: `reward_id` is part of the body comparison; the same transaction_id with another or no `reward_id` returns TRANSACTION_MISMATCH (HTTP 409) and moves no money.";
+        let (id, reward) = (c.id(), c.id());
+        let b0 = c.bal()?;
+        c.money_ok("/wallet/win", &c.reward_win(&id, 250, &reward), b0 + 250, fix)?;
+        c.post("/wallet/win", &c.reward_win(&id, 250, &c.id())).err(409, "TRANSACTION_MISMATCH", fix)?;
+        c.post("/wallet/win", &c.win(&id, 250)).err(409, "TRANSACTION_MISMATCH", fix)?;
+        c.bal_is(b0 + 250, fix)
     });
     c.run("rollback of a known bet credits the stake back", |c| {
         let b0 = c.bal()?;

@@ -34,7 +34,7 @@ if "$BIN" --wallet-url "http://127.0.0.1:$B" --secret e2e-secret --session-token
   echo "conformance passed against the broken wallet" >&2
   exit 1
 fi
-for name in "bad signature" "duplicate bet" "insufficient funds" "late bet"; do
+for name in "bad signature" "duplicate bet" "insufficient funds" "late bet" "duplicate win with a reward_id" "another reward_id"; do
   grep -q "^FAIL .*$name" "$OUT/bad.out" || { echo "expected FAIL for: $name" >&2; cat "$OUT/bad.out" >&2; exit 1; }
 done
 echo "conformance e2e ok"

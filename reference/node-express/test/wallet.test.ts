@@ -120,6 +120,21 @@ test("win credits, 0 closes a losing round, duplicates move nothing", async () =
   await call("bet", bet("w4", 250)); // back to 1000
 });
 
+test("a win with reward_id closes a round with no bet; reward_id is part of the body comparison", async () => {
+  const before = bal();
+  const w = await call("win", { ...win("fr1", 250), reward_id: "welcome-42" });
+  assert.deepEqual(w.body, { balance: before + 250, currency: "EUR", precision: 2 });
+  assert.deepEqual(await call("win", { ...win("fr1", 250), reward_id: "welcome-42" }), w);
+  assert.equal(bal(), before + 250);
+  assert.equal(code(await call("win", { ...win("fr1", 250), reward_id: "other" })), "TRANSACTION_MISMATCH");
+  assert.equal(code(await call("win", win("fr1", 250))), "TRANSACTION_MISMATCH");
+  assert.equal(code(await call("win", { ...win("fr2", 1), reward_id: "bad id!" })), "INVALID_REQUEST");
+  assert.equal(code(await call("win", { ...win("fr3", 1), reward_id: 7 })), "INVALID_REQUEST");
+  assert.equal((await call("win", { ...win("fr4", 0), reward_id: "welcome-42" })).body.balance, before + 250); // a lost free round
+  assert.equal(bal(), before + 250);
+  await call("bet", bet("fr5", 250)); // back to where it was
+});
+
 test("rollback: bet, already rolled back, unknown bet, late bet", async () => {
   await call("bet", bet("rb1", 100));
   assert.equal(bal(), 900);

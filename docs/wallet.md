@@ -29,6 +29,7 @@ Order inside every handler: verify signature, validate fields, then act. Integer
 - Do: credit `amount`, return the balance after. A zero amount still gets a stored transaction.
 - Money: credit once per `transaction_id`.
 - Never check the session token's validity or expiry (spec: Win and rollback checks). Still check player, currency and precision.
+- Optional `reward_id`: the win closes a free round, whose `round_id` has no bet ([freebets.md](freebets.md)). Credit `amount` like any win, also when the reward has expired since; it is part of the body that idempotency compares.
 - Errors: `INVALID_REQUEST` (unknown `player_id`), `CURRENCY_MISMATCH`, `TRANSACTION_MISMATCH`.
 
 ## POST /wallet/rollback

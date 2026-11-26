@@ -14,6 +14,7 @@
 - [launch.md](launch.md): calling `POST /v1/launch`.
 - [catalog.md](catalog.md): calling `GET /v1/games`: the game catalog for your operator, with RTP per mode, stakes and play amounts.
 - [rounds.md](rounds.md): calling `POST /v1/round`: a round's transactions with their status, and a short-lived round page.
+- [freebets.md](freebets.md): free rounds: create a reward, what the player and your wallet see (a win with `reward_id`, no bet), cancel, expiry.
 - [sandbox.md](sandbox.md): the hosted sandbox: credentials and wallet registration, expose your wallet, launch, play a forced win and loss, then 4 Star Dragons.
 - [four-star-dragons.md](four-star-dragons.md): the game 4 Star Dragons: what your wallet sees, play amounts, bought rounds, fun mode.
 - [nova-forge.md](nova-forge.md): the game Nova Forge: what your wallet sees, play amounts, the ante, bought rounds, fun mode.

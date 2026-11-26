@@ -11,7 +11,7 @@ Rules: money is integers in minor units; secrets come from configuration, never 
 
 ## Procedure
 1. Find where the codebase keeps players, balances, currency and sessions.
-2. Add `POST /wallet/authenticate`, `/wallet/balance`, `/wallet/bet`, `/wallet/win`, `/wallet/rollback` per `wallet.md`.
+2. Add `POST /wallet/authenticate`, `/wallet/balance`, `/wallet/bet`, `/wallet/win`, `/wallet/rollback` per `wallet.md` (a win may carry `reward_id`: a free round, see `freebets.md`).
 3. Verify `X-Signature` on the raw body before parsing, per `signing.md`.
 4. Store every money call by `transaction_id` atomically; replay, mismatch and rollback rules per `idempotency.md`. Use only the error codes of `errors.md`.
 5. Add the signed `POST /v1/launch` call per `launch.md`, configured from `POLARKAST_STUDIO_URL`, `POLARKAST_OPERATOR_ID` and `POLARKAST_SHARED_SECRET`.
