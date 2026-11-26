@@ -47,7 +47,7 @@ Check: the sandbox plays a free round and your wallet sees no bet and one win ca
 
 Do not do these; stop and ask a person:
 
-- the commercial agreement with Polarkast
-- production credentials, and sandbox credentials: a person creates the sandbox operator, reads its secret and registers the wallet URL in the client area ([sandbox.md](sandbox.md))
+- the commercial agreement with Polarkast, and its check of your company and licence
+- production credentials, and sandbox credentials: a person requests sandbox access in the client area and, once Polarkast approves it, creates the sandbox operator, reads its secret and registers the wallet URL in the client area ([sandbox.md](sandbox.md))
 - compliance approval
 - go-live sign-off

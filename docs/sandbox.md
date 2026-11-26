@@ -3,7 +3,7 @@
 Hosted studio sandbox: `https://sandbox.polarkast.tech`. Use it after [conformance.md](conformance.md) passes.
 
 ## 1. What you get
-A human signs in to the client area at `https://client.polarkast.tech` with their email, opens Integration and creates a sandbox operator (choose its id and RNG mode; up to 3 per person). It shows the operator id and the studio base URL, and shows the shared secret once, at creation and again at each rotation; the secret cannot be read later, and rotating makes the old one stop working at once. Keep all three in configuration, under one set of names everywhere:
+A human signs in to the client area at `https://client.polarkast.tech` with their email. The first time, they request sandbox access on Get started (company, website, licence, markets); Polarkast staff review it and reply by email. Once it is approved, they open Integration and create a sandbox operator (choose its id and RNG mode; up to 3 per person). It shows the operator id and the studio base URL, and shows the shared secret once, at creation and again at each rotation; the secret cannot be read later, and rotating makes the old one stop working at once. Keep all three in configuration, under one set of names everywhere:
 
 | Variable | Value |
 | --- | --- |
@@ -74,5 +74,5 @@ Check: after each round, your wallet's balance changed by exactly `-cost + payou
 
 ## What stays human
 - Enabling games, currencies and stake limits, suspending or resuming your operator (through your Polarkast contact).
-- Creating the sandbox operator, reading its secret, rotating it, and registering or changing your wallet URL (a person signed in to the client area).
-- Switching to production: credentials, compliance approval and go-live sign-off ([index.md](index.md)).
+- Requesting sandbox access, creating the sandbox operator, reading its secret, rotating it, and registering or changing your wallet URL (a person signed in to the client area).
+- Switching to production: the commercial agreement, a check of your company and its licence, credentials, compliance approval and go-live sign-off ([index.md](index.md)).
