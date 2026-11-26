@@ -13,6 +13,8 @@ Request sandbox credentials from your Polarkast contact. Polarkast issues, per o
 
 You register your sandbox wallet's base URL, and every later change to it, through your Polarkast contact: the sandbox calls only the URL registered for your operator. A quick-tunnel URL changes every run, so send the new one each time before you launch. Never invent these values; if you lack them, stop and ask a human.
 
+Polarkast enables the game `stub` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units) for your operator. Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
+
 The sandbox game is `stub`. Its outcomes are deterministic when forced (`force_outcome` works only in the sandbox):
 
 | `force_outcome` | multiplier | payout for bet 100 |
@@ -58,5 +60,6 @@ Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A 
 Check: after each round, your wallet's balance changed by exactly `-bet + payout` (win: +100, loss: -100 for bet 100), and the `balance` in the response equals your wallet's balance.
 
 ## What stays human
+- Enabling games, currencies and stake limits, suspending or resuming your operator (through your Polarkast contact).
 - Sandbox credentials and registering or changing your wallet URL (through your Polarkast contact).
 - Switching to production: credentials, compliance approval and go-live sign-off ([index.md](index.md)).

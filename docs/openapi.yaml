@@ -141,7 +141,11 @@ paths:
         Polarkast calls the operator's `/wallet/authenticate` with the `session_token`; if that fails, the wallet's
         error code is returned here with the same HTTP status (a wallet timeout or retryable failure becomes
         `INTERNAL_ERROR` 503). If the `currency` differs from the one `authenticate` returned, the result is
-        `CURRENCY_MISMATCH`. An unknown `game_id` is `INVALID_REQUEST`. On success the operator redirects or embeds the
+        `CURRENCY_MISMATCH`. An unknown `game_id` is `INVALID_REQUEST`. Polarkast configures per operator which games and
+        which currencies (with precision and stake limits) are enabled: a game that is not enabled for the operator or
+        is switched off, or a session currency and precision the operator has no settings for, is `NOT_AVAILABLE`;
+        a suspended operator gets `OPERATOR_SUSPENDED` (checked before the wallet is called, except the currency,
+        which is checked after `authenticate` returns it). On success the operator redirects or embeds the
         player at `game_url`. The URL is single-use for the player and valid for 5 minutes.
       parameters:
         - name: X-Operator-Id
@@ -174,7 +178,7 @@ paths:
                   value: { game_url: 'https://play.polarkast.example/g/stub?t=lt_5c1e9d' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidSignature' }
-        '403': { $ref: '#/components/responses/InvalidSession' }
+        '403': { $ref: '#/components/responses/LaunchForbidden' }
         '422': { $ref: '#/components/responses/CurrencyMismatch' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/InternalError' }
@@ -626,6 +630,12 @@ components:
           Fix: a new operation needs a new `transaction_id`; a retry must be byte-for-byte the same body. Not retryable.
         - `TRANSACTION_ROLLED_BACK` (409): bet only; a rollback already references this `transaction_id`. Nothing was
           debited. Fix: do not retry; the round is over. Not retryable.
+        - `NOT_AVAILABLE` (403): launch only. The `game_id` is not enabled for this operator or is switched off, or the
+          session's currency and precision are not enabled for this operator. Fix: launch another game, or ask your
+          Polarkast contact to enable the game or the currency and precision. Not retryable until Polarkast changes
+          the setting.
+        - `OPERATOR_SUSPENDED` (403): launch only. Polarkast has suspended this operator. Fix: contact Polarkast; no
+          launch succeeds until it is resumed. Rounds already open still settle through the wallet. Not retryable.
         - `INTERNAL_ERROR` (500, or 503 when unavailable): the receiver failed temporarily. Fix: the caller retries per
           the retry rules; the receiver must not have moved money, or must make a retry safe through idempotency.
           Retryable.
@@ -637,6 +647,8 @@ components:
         - CURRENCY_MISMATCH
         - TRANSACTION_MISMATCH
         - TRANSACTION_ROLLED_BACK
+        - NOT_AVAILABLE
+        - OPERATOR_SUSPENDED
         - INTERNAL_ERROR
     Error:
       type: object
@@ -691,6 +703,18 @@ components:
           examples:
             wrong_precision:
               value: { error: { code: CURRENCY_MISMATCH, message: 'Session currency is EUR with precision 2; send exactly those values.' } }
+    LaunchForbidden:
+      description: '`INVALID_SESSION`, `NOT_AVAILABLE` or `OPERATOR_SUSPENDED`, all HTTP 403.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            invalid_session:
+              value: { error: { code: INVALID_SESSION, message: 'Session token is unknown or expired; issue a new session token and launch again.' } }
+            not_available:
+              value: { error: { code: NOT_AVAILABLE, message: 'Currency SEK with precision 2 is not enabled for this operator; ask Polarkast to enable it.' } }
+            operator_suspended:
+              value: { error: { code: OPERATOR_SUSPENDED, message: 'This operator is suspended; contact Polarkast.' } }
     Conflict:
       description: '`TRANSACTION_MISMATCH` or `TRANSACTION_ROLLED_BACK`, both HTTP 409.'
       content:
