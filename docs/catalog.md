@@ -12,11 +12,11 @@ It is a GET, signed like every studio call ([signing.md](signing.md)): `X-Signat
 Sync it when you set up and then about once a day. The list changes when a game is added, retired or switched on or off for you, not between rounds. A game is never listed before Polarkast has its RTP.
 
 ## Reading it
-- `enabled`: you can launch the game now. A game that is listed but not enabled for you, or switched off, has `enabled: false`; ask your Polarkast contact to enable it ([launch.md](launch.md)). It is still answered for a suspended operator.
+- `enabled`: you can launch the game now. A game that is listed but not enabled for you, or switched off, has `enabled: false`; ask your Polarkast contact to enable it ([launch.md](launch.md)). A suspended operator is still answered, with every game `enabled: false`.
 - `stakes` and `bets`: one entry per currency enabled for you, with your minimum and maximum stake in minor units. For hold-and-win and pay-anywhere games `bets` lists the play amounts a session in that currency offers, the same as `/game/open`; a free round's `bet` must be one of them.
 - `modes`: `base` first, then `buy`, then `ante`, each with its `cost_x100` (hundredths of the play amount) and its own `rtp`.
 - RTP variants: a variant of a game is a game of its own, with its own `game_id` and `rtp`. Enable the one you want.
-- `end_date`: the game is being retired. It stays listed through that day, and Polarkast switches it off after it. Stop offering it to players before then.
+- `end_date`: the game is being retired. It stays listed and playable through that day (UTC); after it, it is no longer listed and launches and new rounds are `NOT_AVAILABLE` (rounds already open still settle). Stop offering it to players before then.
 - `blocked_countries`: launches with one of these as `country` get `NOT_AVAILABLE`.
 
 ## Check
