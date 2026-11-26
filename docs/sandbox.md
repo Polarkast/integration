@@ -3,7 +3,7 @@
 Hosted studio sandbox: `https://sandbox.polarkast.tech`. Use it after [conformance.md](conformance.md) passes.
 
 ## 1. What you get
-Request sandbox credentials from your Polarkast contact. Polarkast issues, per operator: an operator id, a shared secret and the studio base URL. Keep them in configuration, under one set of names everywhere:
+A human signs in to the client area at `https://client.polarkast.tech` with their email, opens Integration and creates a sandbox operator (choose its id and RNG mode; up to 3 per person). It shows the operator id and the studio base URL, and shows the shared secret once, at creation and again at each rotation; the secret cannot be read later, and rotating makes the old one stop working at once. Keep all three in configuration, under one set of names everywhere:
 
 | Variable | Value |
 | --- | --- |
@@ -11,9 +11,9 @@ Request sandbox credentials from your Polarkast contact. Polarkast issues, per o
 | `POLARKAST_SHARED_SECRET` | the shared secret (signs requests, verifies the wallet's) |
 | `POLARKAST_STUDIO_URL` | the studio base URL, `https://sandbox.polarkast.tech` |
 
-You register your sandbox wallet's base URL, and every later change to it, through your Polarkast contact: the sandbox calls only the URL registered for your operator. A quick-tunnel URL changes every run, so send the new one each time before you launch. Never invent these values; if you lack them, stop and ask a human.
+You register your sandbox wallet's base URL, and every later change to it, in the client area (Integration, Wallet URL): the sandbox calls only the URL registered for your operator. It must be `https://` and resolve to a public address; loopback, private, link-local, CGNAT and cloud-metadata addresses are refused, both when you save it and on every call, and redirects are not followed. A quick-tunnel URL changes every run, so save the new one each time before you launch. Never invent these values; if you lack them, stop and ask a human to create the operator and read out the secret.
 
-Polarkast enables the game `stub` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units) for your operator. Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
+A new operator has the game `stub` and the currency EUR with precision 2 (stakes from 1 to 1,000,000 minor units). Another currency or game is enabled on request; until then launch returns `NOT_AVAILABLE` (see [launch.md](launch.md)). Your test player's wallet must return that currency and precision from `/wallet/authenticate`.
 
 The sandbox game is `stub`. Its outcomes are deterministic when forced (`force_outcome` works only in the sandbox):
 
@@ -31,7 +31,7 @@ The sandbox calls your wallet over the internet, so it needs a public HTTPS URL.
 cloudflared tunnel --url http://localhost:<port>
 ```
 
-It prints `https://<random>.trycloudflare.com`. That URL changes on every run: keep the tunnel running, or send Polarkast the new URL each time. Staging and production wallets use their own public endpoints.
+It prints `https://<random>.trycloudflare.com`. That URL changes on every run: keep the tunnel running, or save the new URL in the client area each time. Staging and production wallets use their own public endpoints.
 
 ## 3. Conformance first
 Run the conformance CLI against your wallet ([conformance.md](conformance.md)). Do not go on until it exits 0.
@@ -61,5 +61,5 @@ Check: after each round, your wallet's balance changed by exactly `-bet + payout
 
 ## What stays human
 - Enabling games, currencies and stake limits, suspending or resuming your operator (through your Polarkast contact).
-- Sandbox credentials and registering or changing your wallet URL (through your Polarkast contact).
+- Creating the sandbox operator, reading its secret, rotating it, and registering or changing your wallet URL (a person signed in to the client area).
 - Switching to production: credentials, compliance approval and go-live sign-off ([index.md](index.md)).

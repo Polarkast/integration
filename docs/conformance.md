@@ -6,7 +6,7 @@ Tests an operator wallet the way Polarkast calls it. The rules it checks come fr
 1. Run your wallet where the CLI can reach it.
 2. Create a test player with a balance of at least 1000 minor units and an active session token. The CLI moves this player's balance: use a player for conformance only, and a different player for the sandbox round in [sandbox.md](sandbox.md).
 3. Create a token of an expired session for the same player: a session your wallet issued whose expiry time is in the past (set the expiry back in your session store, or let a short-lived one lapse). It enables the expired-session checks for win and rollback. The reference wallet seeds one from `EXPIRED_SESSION_TOKEN`.
-4. Use the sandbox shared secret issued by your Polarkast contact. Pass it from an environment variable or secrets store; do not commit it in scripts.
+4. Use the sandbox shared secret a human reads from the client area ([sandbox.md](sandbox.md)). Pass it from an environment variable or secrets store; do not commit it in scripts.
 
 ## Binary
 Releases are at https://github.com/Polarkast/integration/releases/tag/conformance-latest. Pick the asset for your platform:

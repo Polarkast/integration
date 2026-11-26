@@ -38,6 +38,6 @@ Check: looking up a sandbox round by its id lists its bet and win as `succeeded`
 Do not do these; stop and ask a person:
 
 - the commercial agreement with Polarkast
-- production credentials (sandbox credentials are issued per operator by your Polarkast contact, who also registers or updates your wallet URL)
+- production credentials, and sandbox credentials: a person creates the sandbox operator, reads its secret and registers the wallet URL in the client area ([sandbox.md](sandbox.md))
 - compliance approval
 - go-live sign-off

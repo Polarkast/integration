@@ -7,7 +7,7 @@ description: Integrate an operator's casino codebase with the Polarkast seamless
 
 Read `llms.txt` first, then the pages it lists. The spec `openapi.yaml` is authoritative.
 
-Rules: money is integers in minor units; secrets come from configuration, never code, under the names `POLARKAST_SHARED_SECRET`, `POLARKAST_OPERATOR_ID` and `POLARKAST_STUDIO_URL` (issued by the operator's Polarkast contact); stop and ask a human for production credentials, compliance approval, commercial terms and go-live.
+Rules: money is integers in minor units; secrets come from configuration, never code, under the names `POLARKAST_SHARED_SECRET`, `POLARKAST_OPERATOR_ID` and `POLARKAST_STUDIO_URL` (a person creates the sandbox operator in the client area and reads out the secret once); stop and ask a human for production credentials, compliance approval, commercial terms and go-live.
 
 ## Procedure
 1. Find where the codebase keeps players, balances, currency and sessions.
@@ -19,7 +19,7 @@ Rules: money is integers in minor units; secrets come from configuration, never 
    `conformance --wallet-url <url> --session-token <token> --expired-session-token <token>` (secret from `POLARKAST_SHARED_SECRET`)
    Get the binary asset for your platform (`conformance-linux-x86_64`, `conformance-macos-arm64`, `conformance-windows-x86_64.exe`) from https://github.com/Polarkast/integration/releases/tag/conformance-latest (fallback: `cargo build --release -p conformance`).
    Fix each printed failure and rerun (see `conformance.md`). SKIP means not verified; go-live needs zero skips.
-7. Make the wallet reachable over public HTTPS (locally `cloudflared tunnel --url http://localhost:<port>`; the URL changes every run, so a human must give the new one to the Polarkast contact), launch against the sandbox with a different test player than conformance used, and play one round per `sandbox.md`. The wallet balance must change by exactly -bet + payout.
+7. Make the wallet reachable over public HTTPS (locally `cloudflared tunnel --url http://localhost:<port>`; the URL changes every run, so a human must save the new one under Integration in the client area), launch against the sandbox with a different test player than conformance used, and play one round per `sandbox.md`. The wallet balance must change by exactly -bet + payout.
 
 ## Check
 The `conformance` command exits 0 with every check PASS and none SKIP, and one sandbox round (`sandbox.md`) settled against your wallet. If it cannot run for lack of credentials or the binary, stop and ask a human.
