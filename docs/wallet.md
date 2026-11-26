@@ -2,7 +2,7 @@
 
 Implements: [openapi.yaml](openapi.yaml), paths `/wallet/*`, and the sections Transport, Money, Identifiers. Polarkast calls these on the operator's base URL. Every request is signed ([signing.md](signing.md)). Every failure uses the error body in [errors.md](errors.md). Amounts are integers in minor units with `currency` and `precision`.
 
-Order inside every handler: verify signature, validate fields, then act.
+Order inside every handler: verify signature, validate fields, then act. Integers are integer literals: `100.0` and `1e2` are `INVALID_REQUEST` (spec: Money).
 
 ## POST /wallet/authenticate
 - When: a player launches a game.
@@ -20,7 +20,7 @@ Order inside every handler: verify signature, validate fields, then act.
 - When: a round starts.
 - Do: debit `amount` and return the balance after. Must be idempotent ([idempotency.md](idempotency.md)).
 - Money: debit once per `transaction_id`.
-- Errors: `INSUFFICIENT_FUNDS` (debit nothing), `INVALID_SESSION` (the token must be valid now), `CURRENCY_MISMATCH`, `TRANSACTION_ROLLED_BACK`, `TRANSACTION_MISMATCH`.
+- Errors: `INSUFFICIENT_FUNDS` (debit nothing), `INVALID_SESSION` (the token must be valid now and be `player_id`'s own: another player's token is refused), `CURRENCY_MISMATCH`, `TRANSACTION_ROLLED_BACK`, `TRANSACTION_MISMATCH`.
 
 ## POST /wallet/win
 - When: a round ends. `amount` 0 closes a losing round.
@@ -31,9 +31,9 @@ Order inside every handler: verify signature, validate fields, then act.
 
 ## POST /wallet/rollback
 - When: Polarkast is unsure whether a bet happened (spec: Timeouts and retries).
-- Do: reverse the bet named by `bet_transaction_id`. Answer HTTP 200 for the three cases in the spec: bet exists, already rolled back, bet unknown. Record the bet id as rolled back in every case.
+- Do: reverse the bet named by `bet_transaction_id`. Answer HTTP 200 for the cases in the spec: bet exists, already rolled back, bet unknown or refused. Record the bet id as rolled back in every case.
 - Money: credit the stake back at most once per bet.
 - Never check the session token's validity or expiry (spec: Win and rollback checks).
-- Errors: `INVALID_REQUEST` (unknown `player_id`, or the bet is another player's), `TRANSACTION_MISMATCH`. Never `CURRENCY_MISMATCH` or `INVALID_SESSION`.
+- Errors: `INVALID_REQUEST` (unknown `player_id`, or the bet is another player's), `TRANSACTION_MISMATCH` (also when `bet_transaction_id` is a win's or rollback's id). Never `CURRENCY_MISMATCH` or `INVALID_SESSION`.
 
 Response time targets and retry behaviour are in the spec, section Timeouts and retries.

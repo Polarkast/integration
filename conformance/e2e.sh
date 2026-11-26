@@ -18,7 +18,7 @@ wait_port() {
 }
 
 P=$(free_port)
-(cd reference/node-express && PORT=$P SHARED_SECRET=e2e-secret SESSION_TOKEN=sess_e2e EXPIRED_SESSION_TOKEN=sess_e2e_old exec node src/index.ts) >"$OUT/ref.log" 2>&1 &
+(cd reference/node-express && PORT=$P POLARKAST_SHARED_SECRET=e2e-secret SESSION_TOKEN=sess_e2e EXPIRED_SESSION_TOKEN=sess_e2e_old exec node src/index.ts) >"$OUT/ref.log" 2>&1 &
 PIDS="$PIDS $!"
 wait_port "$P"
 "$BIN" --wallet-url "http://127.0.0.1:$P" --secret e2e-secret --session-token sess_e2e --expired-session-token sess_e2e_old

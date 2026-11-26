@@ -21,7 +21,7 @@ Check: with your own request (curl or a test), send the same `bet` twice and see
 
 ## 4. Run the conformance CLI until it passes
 
-See [conformance.md](conformance.md). Fix each reported failure, rerun, repeat. Done when the exit code is 0.
+See [conformance.md](conformance.md). Fix each reported failure, rerun, repeat. Done when the exit code is 0 and no check is skipped.
 
 ## 5. Call launch
 
@@ -33,6 +33,6 @@ Check: it returns a `game_url`. Then play one round against the hosted sandbox: 
 Do not do these; stop and ask a person:
 
 - the commercial agreement with Polarkast
-- production credentials (sandbox credentials are issued per operator)
+- production credentials (sandbox credentials are issued per operator by your Polarkast contact, who also registers or updates your wallet URL)
 - compliance approval
 - go-live sign-off

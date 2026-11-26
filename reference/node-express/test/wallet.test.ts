@@ -199,3 +199,58 @@ test("win and rollback: unknown or foreign player is INVALID_REQUEST, session to
   assert.deepEqual(ok.body, { balance: b0 + 1, currency: "EUR", precision: 2 });
   store.players.delete("p2");
 });
+
+// Spec "Money": 100.0 and 1e2 are not integer literals.
+test("non-integer number literals are INVALID_REQUEST, even with an integer value", async () => {
+  const raw = (amount: string) => JSON.stringify(bet("lit1", 100)).replace('"amount":100', `"amount":${amount}`);
+  for (const a of ["100.0", "1e2", "1E2", "1.0e2"]) assert.equal(code(await call("bet", raw(a))), "INVALID_REQUEST", a);
+  assert.equal(code(await call("win", JSON.stringify(win("lit2", 1)).replace('"precision":2', '"precision":2.0'))), "INVALID_REQUEST");
+  assert.equal((await call("bet", raw("100"))).status, 200); // malformed attempts did not use up the id
+  await call("rollback", rollback("lit1r", "lit1"));
+});
+
+// Spec "Idempotency": only well-formed requests are stored; unknown fields do not make bodies differ.
+test("a malformed request is not stored and leaves its transaction_id free", async () => {
+  assert.equal(code(await call("bet", bet("ms1", 0))), "INVALID_REQUEST");
+  assert.equal((await call("bet", bet("ms1", 100))).status, 200);
+  const unknownPlayer = await call("win", { ...win("ms2", 1), player_id: "ghost" }); // well-formed: stored
+  assert.deepEqual(await call("win", { ...win("ms2", 1), player_id: "ghost" }), unknownPlayer);
+  assert.equal(code(await call("win", win("ms2", 1))), "TRANSACTION_MISMATCH");
+  assert.deepEqual(await call("bet", bet("ms1", 100, { x: 1 })), await call("bet", bet("ms1", 100, { x: 2 })));
+  await call("rollback", rollback("ms1r", "ms1"));
+});
+
+test("rollback of a refused bet: 200, nothing moves, the bet id is rolled back", async () => {
+  const b0 = bal();
+  assert.equal(code(await call("bet", bet("rf1", b0 + 1))), "INSUFFICIENT_FUNDS");
+  assert.deepEqual((await call("rollback", rollback("rf1r", "rf1"))).body.balance, b0);
+  assert.equal(code(await call("bet", bet("rf1", b0 + 1))), "TRANSACTION_ROLLED_BACK"); // not the stored error
+  assert.equal(bal(), b0);
+});
+
+test("rollback naming a win or a rollback is TRANSACTION_MISMATCH and moves nothing", async () => {
+  const b0 = bal();
+  await call("win", win("nw1", 10));
+  const r = await call("rollback", rollback("nw1r", "nw1"));
+  assert.deepEqual([r.status, code(r)], [409, "TRANSACTION_MISMATCH"]);
+  await call("bet", bet("nb1", 10));
+  await call("rollback", rollback("nb1r", "nb1"));
+  assert.equal(code(await call("rollback", rollback("nb1r2", "nb1r"))), "TRANSACTION_MISMATCH");
+  assert.equal(bal(), b0 + 10);
+  // The win's id was not recorded as rolled back: replaying the win still returns its stored response.
+  assert.equal((await call("win", win("nw1", 10))).status, 200);
+  assert.equal(bal(), b0 + 10);
+});
+
+test("bet with another player's valid session token is INVALID_SESSION", async () => {
+  store.players.set("p3", { balance: 500, currency: "EUR", precision: 2 });
+  store.sessions.set("sess_p3", { player_id: "p3", expired: false });
+  try {
+    const r = await call("bet", bet("op1", 10, { player_id: "p3" })); // sess_test belongs to player-42
+    assert.deepEqual([r.status, code(r)], [403, "INVALID_SESSION"]);
+    assert.equal(store.players.get("p3")!.balance, 500);
+  } finally {
+    store.players.delete("p3");
+    store.sessions.delete("sess_p3");
+  }
+});

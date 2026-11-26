@@ -84,7 +84,10 @@ impl Ctx {
     }
 
     fn send(&self, path: &str, body: &Value, sig: Sig) -> Resp {
-        let raw = body.to_string();
+        self.send_raw(path, body.to_string(), sig)
+    }
+    /// Sends exactly these bytes, signed over them.
+    fn send_raw(&self, path: &str, raw: String, sig: Sig) -> Resp {
         let mut mac = Hmac::<Sha256>::new_from_slice(self.secret.as_bytes()).unwrap();
         mac.update(raw.as_bytes());
         let good: String = mac
@@ -198,7 +201,7 @@ impl Ctx {
     }
     fn skip(&mut self, name: &str) {
         self.skipped += 1;
-        println!("SKIP {name} (no --expired-session-token)");
+        println!("SKIP {name} (NOT VERIFIED: no --expired-session-token)");
     }
 }
 
@@ -508,6 +511,75 @@ fn main() {
         c.post("/wallet/rollback", &rb).err(400, "INVALID_REQUEST", fix)?;
         c.bal_is(b0, fix)
     });
+    c.run("rollback of a refused bet succeeds and the bet id counts as rolled back", |c| {
+        let fix = "Idempotency: a rollback of a bet that was refused (never debited, e.g. INSUFFICIENT_FUNDS) is answered HTTP 200 and no money moves; the bet id is recorded as rolled back, so replaying that bet returns TRANSACTION_ROLLED_BACK (HTTP 409), not its stored error.";
+        let b0 = c.bal()?;
+        let id = c.id();
+        let body = c.bet(&id, b0 + 1);
+        c.post("/wallet/bet", &body).err(402, "INSUFFICIENT_FUNDS", "Bet: when the balance is below `amount` the error is INSUFFICIENT_FUNDS (HTTP 402).")?;
+        c.money_ok("/wallet/rollback", &c.rollback(&c.id(), &id), b0, fix)?;
+        c.post("/wallet/bet", &body).err(409, "TRANSACTION_ROLLED_BACK", fix)?;
+        c.bal_is(b0, fix)
+    });
+    c.run("rollback naming a win is TRANSACTION_MISMATCH", |c| {
+        let fix = "Idempotency: a rollback whose bet_transaction_id is the id of a win is TRANSACTION_MISMATCH (HTTP 409): the id is already used by another call type. Nothing moves and the id is not recorded as rolled back.";
+        let w = c.id();
+        let b0 = c.bal()?;
+        c.money_ok("/wallet/win", &c.win(&w, 10), b0 + 10, "Win: credits `amount`.")?;
+        c.post("/wallet/rollback", &c.rollback(&c.id(), &w)).err(409, "TRANSACTION_MISMATCH", fix)?;
+        c.bal_is(b0 + 10, fix)
+    });
+    c.run("rollback naming a rollback is TRANSACTION_MISMATCH", |c| {
+        let fix = "Idempotency: a rollback whose bet_transaction_id is the id of a rollback is TRANSACTION_MISMATCH (HTTP 409): the id is already used by another call type. Nothing moves.";
+        let b0 = c.bal()?;
+        let bet = c.placed_bet(100)?;
+        let r = c.id();
+        c.money_ok("/wallet/rollback", &c.rollback(&r, &bet), b0, "Rollback: credits the stake back.")?;
+        c.post("/wallet/rollback", &c.rollback(&c.id(), &r)).err(409, "TRANSACTION_MISMATCH", fix)?;
+        c.bal_is(b0, fix)
+    });
+    c.run("bet with another player's session token is INVALID_SESSION", |c| {
+        let fix = "Errors: a bet needs a session token that is valid and belongs to player_id; another player's token is INVALID_SESSION (HTTP 403) and nothing is debited. (The suite sends the test player's valid token with a different player_id.)";
+        let b0 = c.bal()?;
+        let mut body = c.bet(&c.id(), 100);
+        body["player_id"] = json!(format!("{}-other", c.run));
+        c.post("/wallet/bet", &body).err(403, "INVALID_SESSION", fix)?;
+        c.bal_is(b0, fix)
+    });
+    c.run("unknown fields do not make a repeated body different", |c| {
+        let fix = "Idempotency: \"the same body\" compares the fields the spec defines; fields it does not define are ignored, so a repeat that differs only in an unknown field returns the original response and moves no money.";
+        let b0 = c.bal()?;
+        let mut body = c.bet(&c.id(), 100);
+        body["x_unknown"] = json!(1);
+        let first = c.post("/wallet/bet", &body);
+        first.ok(&c.cur, c.prec, fix)?;
+        body["x_unknown"] = json!("other");
+        let again = c.post("/wallet/bet", &body);
+        if again.status != first.status || again.body != first.body {
+            return Err(again.fail(format!("the original response: {} {}", first.status, first.text), fix));
+        }
+        c.bal_is(b0 - 100, fix)
+    });
+    c.run("a malformed request is not stored and leaves its transaction id free", |c| {
+        let fix = "Idempotency: only a well-formed request is stored; a malformed one (here a bet of 0, INVALID_REQUEST) does not use up its transaction_id, so the same id with a valid body is executed normally.";
+        let id = c.id();
+        let b0 = c.bal()?;
+        c.post("/wallet/bet", &c.bet(&id, 0)).err(400, "INVALID_REQUEST", fix)?;
+        c.money_ok("/wallet/bet", &c.bet(&id, 100), b0 - 100, fix)
+    });
+    c.run("amounts written as 100.0 or 1e2 are INVALID_REQUEST", |c| {
+        let fix = "Money: a JSON number is an integer only when written as an integer literal; `100.0` and `1e2` are INVALID_REQUEST (HTTP 400) for amount even though their value is 100. Inspect the number as written, not the parsed value. Nothing moves.";
+        let b0 = c.bal()?;
+        for lit in ["100.0", "1e2"] {
+            let id = c.id();
+            let lit = format!("\"amount\":{lit}");
+            let raw = c.bet(&id, 100).to_string().replace("\"amount\":100", &lit);
+            c.send_raw("/wallet/bet", raw, Sig::Good).err(400, "INVALID_REQUEST", fix)?;
+            let raw = c.win(&id, 100).to_string().replace("\"amount\":100", &lit);
+            c.send_raw("/wallet/win", raw, Sig::Good).err(400, "INVALID_REQUEST", fix)?;
+        }
+        c.bal_is(b0, fix)
+    });
     c.run("rollback is never CURRENCY_MISMATCH", |c| {
         let fix = "Rollback: it has no currency or precision fields, so CURRENCY_MISMATCH never applies; unknown fields are ignored. The response carries the bet owner's balance, currency and precision.";
         let b0 = c.bal()?;
@@ -544,5 +616,10 @@ fn main() {
         "\n{} passed, {} failed, {} skipped",
         c.passed, c.failed, c.skipped
     );
+    if c.skipped > 0 {
+        println!(
+            "skipped checks are not verified; go-live needs zero skips (pass --expired-session-token)"
+        );
+    }
     std::process::exit(if c.failed == 0 { 0 } else { 1 });
 }

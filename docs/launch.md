@@ -1,6 +1,6 @@
 # Launch
 
-Implements: [openapi.yaml](openapi.yaml), `POST /v1/launch`. The studio base URL and `X-Operator-Id` are issued with the sandbox credentials. If you were not given them, implement the launch call with both as configuration, do not guess values, and report the missing values to a human.
+Implements: [openapi.yaml](openapi.yaml), `POST /v1/launch`. The studio base URL (`POLARKAST_STUDIO_URL`), `X-Operator-Id` (`POLARKAST_OPERATOR_ID`) and the shared secret (`POLARKAST_SHARED_SECRET`) are issued by your Polarkast contact with the sandbox credentials ([sandbox.md](sandbox.md)). If you were not given them, implement the launch call with all three as configuration, do not guess values, and report the missing values to a human.
 
 ## When
 Call it server-side when a player opens a game, with a valid session of that player.

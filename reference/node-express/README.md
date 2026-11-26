@@ -4,7 +4,7 @@ A minimal seamless-wallet integration for `docs/openapi.yaml`. Copy `src/wallet.
 
 ```sh
 npm ci
-SHARED_SECRET=changeme npm start     # listens on :8081
+POLARKAST_SHARED_SECRET=changeme npm start     # listens on :8081
 npm test                             # tsc --noEmit, then node --test
 ```
 
@@ -12,7 +12,7 @@ npm test                             # tsc --noEmit, then node --test
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SHARED_SECRET` | required | HMAC key shared with Polarkast |
+| `POLARKAST_SHARED_SECRET` | required | HMAC key shared with Polarkast (the old name `SHARED_SECRET` is still read) |
 | `PORT` | `8081` | listen port |
 | `PLAYER_ID` | `player-42` | seeded test player |
 | `SESSION_TOKEN` | `sess_test` | the player's session token |
@@ -35,5 +35,11 @@ npm test                             # tsc --noEmit, then node --test
 | Win and rollback accepted after the session expired | `win`, `rollback` handlers (token unchecked) |
 | Currency and precision must match the session | `bet`, `win` handlers, `wrongCurrency` |
 | Integer amounts, at most 2^53-1 | `checks.amount`, `checks.positive` |
+| `100.0` and `1e2` are not integers (`INVALID_REQUEST`) | `parseJson` |
+| Only well-formed requests are stored; malformed ones leave the id free | `once` runs after `validate` |
+| Body identity compares the spec's fields; unknown fields ignored | `once` (`schemas[kind]`) |
+| Rollback of a refused bet: 200, id recorded as rolled back | `rollback` handler |
+| Rollback naming a win or rollback id: `TRANSACTION_MISMATCH` | `rollback` handler (`txs` kind) |
+| Bet with another player's token: `INVALID_SESSION` | `session` |
 
 `src/launch.ts` `launch()` is the operator's signed `POST /v1/launch` call.

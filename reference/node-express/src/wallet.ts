@@ -8,7 +8,7 @@ const MAX = Number.MAX_SAFE_INTEGER; // 2^53-1, spec "Money"
 export type Store = {
   players: Map<string, { balance: number; currency: string; precision: number }>;
   sessions: Map<string, { player_id: string; expired: boolean }>;
-  txs: Map<string, { fp: string; resp: Resp }>; // one namespace for bet, win, rollback
+  txs: Map<string, { kind: string; fp: string; resp: Resp }>; // one namespace for bet, win, rollback
   bets: Map<string, { player_id: string; amount: number }>; // bets that debited money
   rolledBack: Set<string>; // bet ids rolled back, including bets never seen
 };
@@ -47,8 +47,8 @@ const checks = {
   id: (v: unknown) => typeof v === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(v),
   currency: (v: unknown) => typeof v === "string" && /^[A-Z0-9_]{1,16}$/.test(v),
   precision: (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 18,
-  // ponytail: JSON.parse reads 100.0 and 1e2 as the integer 100, so those are accepted; inspect the
-  // raw text if byte-level strictness is ever needed. Values above 2^53-1 lose exactness and are rejected.
+  // Spec "Money": 100.0 and 1e2 are not integer literals; `parseJson` turns them into strings, so they fail here.
+  // Values above 2^53-1 lose exactness and are rejected.
   amount: (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0,
   positive: (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 1,
 };
@@ -64,6 +64,12 @@ const schemas: Record<string, Record<string, Kind>> = {
   win: { ...base, ...money },
   rollback: { ...base, bet_transaction_id: "id" },
 };
+
+// Spec "Money": a number counts only when written as an integer literal. The reviver sees the source text.
+export function parseJson(text: string): unknown {
+  return (JSON.parse as any)(text, (_k: string, v: unknown, ctx?: { source?: string }) =>
+    typeof v === "number" && !/^-?\d+$/.test(ctx?.source ?? String(v)) ? ctx?.source : v);
+}
 
 function validate(schema: Record<string, Kind>, body: unknown): Resp | null {
   if (typeof body !== "object" || body === null || Array.isArray(body))
@@ -99,7 +105,7 @@ export function createApp(secret: string, store: Store = seedStore()) {
     if (kind === "bet" && rolledBack.has(id)) return rolledBackErr(); // late or replayed bet
     if (prior) return prior.resp;
     const resp = exec();
-    if (resp.body.error?.code !== "INTERNAL_ERROR") txs.set(id, { fp, resp }); // INTERNAL_ERROR never stored
+    if (resp.body.error?.code !== "INTERNAL_ERROR") txs.set(id, { kind, fp, resp }); // INTERNAL_ERROR never stored
     return resp;
   }
 
@@ -134,6 +140,9 @@ export function createApp(secret: string, store: Store = seedStore()) {
       // Session token deliberately not checked: rollback must be accepted after expiry.
       const p = players.get(b.player_id);
       if (!p) return unknownPlayer();
+      // Spec "Idempotency": the id of a win or rollback is used by another call type.
+      const used = txs.get(b.bet_transaction_id)?.kind;
+      if (used === "win" || used === "rollback") return mismatch();
       const bet = bets.get(b.bet_transaction_id);
       if (bet && bet.player_id !== b.player_id) return err(400, "INVALID_REQUEST", "player_id is not the bet's player; send the bet's player_id.");
       if (bet && !rolledBack.has(b.bet_transaction_id)) p.balance += bet.amount; // first rollback only
@@ -154,7 +163,7 @@ export function createApp(secret: string, store: Store = seedStore()) {
       r = err(401, "INVALID_SIGNATURE", "X-Signature does not match HMAC-SHA256 of the raw body; sign the exact bytes you send with the shared secret and encode as lowercase hex.");
     else {
       let body: unknown;
-      try { body = JSON.parse(raw.toString("utf8")); } catch { body = undefined; }
+      try { body = parseJson(raw.toString("utf8")); } catch { body = undefined; }
       r = validate(schemas[op], body) ?? handlers[op](body as Body);
     }
     res.status(r.status).json(r.body);
