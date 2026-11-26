@@ -78,6 +78,7 @@ test("bet moves money; duplicate replays; changed body or call type mismatches",
   const first = await call("bet", bet("b1", 100));
   assert.deepEqual(first, { status: 200, body: { balance: 900, currency: "EUR", precision: 2 } });
   await call("bet", bet("b1", 100, { unknown_field: 1 })); // unknown fields ignored
+  assert.deepEqual(await call("bet", bet("b1", 100, { brand: "north" })), first); // brand is not compared
   assert.deepEqual(await call("bet", bet("b1", 100)), first);
   assert.equal(bal(), 900);
   const m = await call("bet", bet("b1", 101));

@@ -7,12 +7,18 @@ Call it server-side when a player opens a game, with a valid session of that pla
 
 ## Request
 Headers: `Content-Type: application/json`, `X-Operator-Id`, `X-Signature` (see [signing.md](signing.md)).
-Body fields: `session_token`, `player_id`, `game_id`, `currency`, `language`. Types and ranges are in the spec.
+Body fields: `session_token`, `player_id`, `game_id`, `currency`, `language`, and optionally `brand`, `country` and `lobby_url`. Types and ranges are in the spec.
+
+- `brand`: for an operator that runs several brands behind one wallet URL. Ask your Polarkast contact to register each brand first. Polarkast then sends it as `brand` on every wallet call of that session ([wallet.md](wallet.md)). An operator without brands omits it.
+- `country`: the player's country, two uppercase letters (ISO 3166-1 alpha-2). A game blocked in that country is refused.
+- `lobby_url`: an `http://` or `https://` URL; the game's home button goes there.
+
+Coin currencies can show a symbol instead of a cash sign: Polarkast keeps it in your operator settings, so launch does not carry it. The mobile or desktop device is detected by the game client, never sent by you.
 
 ## What happens
 Polarkast calls your `/wallet/authenticate` with the token. Failures come back in the standard error body ([errors.md](errors.md)); the spec says how wallet errors map.
 
-Before it calls your wallet, Polarkast checks the settings it keeps for your operator. A suspended operator gets `OPERATOR_SUSPENDED`; a game that is not enabled for you (new operators start with none) or is switched off gets `NOT_AVAILABLE`. After `authenticate` returns the session's currency and precision, they must be enabled for you too, otherwise `NOT_AVAILABLE`. All three are HTTP 403 and not retryable: ask your Polarkast contact to enable the game, or the currency and precision, or to resume the operator. Stake limits per currency are set the same way; a stake outside them is refused when the player bets, before any wallet call.
+Before it calls your wallet, Polarkast checks the settings it keeps for your operator. A suspended operator gets `OPERATOR_SUSPENDED`; a game that is not enabled for you (new operators start with none), is switched off, or is blocked in the request's `country`, and a `brand` you have not registered, get `NOT_AVAILABLE`. After `authenticate` returns the session's currency and precision, they must be enabled for you too, otherwise `NOT_AVAILABLE`. All of these are HTTP 403 and not retryable: ask your Polarkast contact to enable the game, register the brand, enable the currency and precision, or resume the operator. Stake limits per currency are set the same way; a stake outside them is refused when the player bets, before any wallet call.
 
 ## Response
 `{"game_url": "..."}`. Redirect or embed the player at `game_url`. The spec states how long it is valid and that it is single-use; call launch again for a new one, never cache it.

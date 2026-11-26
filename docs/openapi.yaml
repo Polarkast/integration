@@ -41,6 +41,14 @@ info:
     `A-Za-z0-9_-.:`. Polarkast generates `transaction_id` and `round_id` (UUIDs); the operator generates `player_id`
     and `session_token`.
 
+    ## Brand
+    An operator that runs several brands behind one wallet URL registers them with Polarkast and sends the optional
+    `brand` (an `Id`) in `/v1/launch`. Polarkast then sends the same `brand` on every wallet call of that session:
+    `/wallet/authenticate`, `/wallet/balance`, `/wallet/bet`, `/wallet/win` and `/wallet/rollback` (a rollback carries
+    its bet's brand). Without a brand the field is absent. `brand` is fixed per session, so Polarkast never changes it
+    between retries of a call. It is not part of the idempotency body comparison: a repeated `transaction_id` is
+    judged on the other fields, as before. An operator without brands can ignore the field.
+
     ## Signing (both directions, every request)
     Every request, from either side, carries the header `X-Signature`: the lowercase hex encoding (64 characters) of
     HMAC-SHA256 computed over the exact raw bytes of the HTTP request body, keyed with the per-operator shared secret
@@ -143,9 +151,10 @@ paths:
         `INTERNAL_ERROR` 503). If the `currency` differs from the one `authenticate` returned, the result is
         `CURRENCY_MISMATCH`. An unknown `game_id` is `INVALID_REQUEST`. Polarkast configures per operator which games and
         which currencies (with precision and stake limits) are enabled: a game that is not enabled for the operator or
-        is switched off, or a session currency and precision the operator has no settings for, is `NOT_AVAILABLE`;
-        a suspended operator gets `OPERATOR_SUSPENDED` (checked before the wallet is called, except the currency,
-        which is checked after `authenticate` returns it). On success the operator redirects or embeds the
+        is switched off, a game blocked in the request's `country`, a `brand` the operator has not registered, or a
+        session currency and precision the operator has no settings for, is `NOT_AVAILABLE`;
+        a suspended operator gets `OPERATOR_SUSPENDED` (checked before the wallet is called, as are the brand and the
+        country, except the currency, which is checked after `authenticate` returns it). On success the operator redirects or embeds the
         player at `game_url`. The URL is single-use for the player and valid for 5 minutes.
       parameters:
         - name: X-Operator-Id
@@ -167,6 +176,16 @@ paths:
                   game_id: stub
                   currency: EUR
                   language: en
+              with_context:
+                value:
+                  session_token: sess_8f3a
+                  player_id: player-42
+                  game_id: stub
+                  currency: EUR
+                  language: en
+                  brand: brand_north
+                  country: SE
+                  lobby_url: https://casino.example/lobby
       responses:
         '200':
           description: Game URL created.
@@ -245,7 +264,9 @@ paths:
       description: |
         Sandbox only; not part of the operator contract. Stands in for the game client. `launch_token` is the `t`
         query parameter of the `game_url` returned by `/v1/launch`. It works once, within 5 minutes. Unsigned.
-        Polarkast reads the player's balance from the operator's `/wallet/balance`.
+        Polarkast reads the player's balance from the operator's `/wallet/balance`. The optional `device` is recorded
+        on the session; operators never send it, the game client does. The response carries the launch's `lobby_url`
+        (the target of the game's home button) and the currency's `currency_symbol` when Polarkast has configured one.
       security: []
       requestBody:
         required: true
@@ -253,7 +274,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/GameOpenRequest' }
             examples:
-              ok: { value: { launch_token: lt_5c1e9d } }
+              ok: { value: { launch_token: lt_5c1e9d, device: mobile } }
       responses:
         '200':
           description: Session opened.
@@ -269,6 +290,8 @@ paths:
                     currency: EUR
                     precision: 2
                     balance: 100000
+                    lobby_url: https://casino.example/lobby
+                    currency_symbol: '€'
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 0
@@ -545,6 +568,19 @@ components:
           type: string
           pattern: '^[a-z]{2}$'
           description: ISO 639-1 lowercase two-letter code. An unsupported language falls back to `en`.
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional. One of the operator's registered brands (see Brand). An unregistered brand is `NOT_AVAILABLE`. Stored on the session and sent on every wallet call for it.
+        country:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          description: Optional. The player's country, ISO 3166-1 alpha-2, uppercase. A game blocked in this country is `NOT_AVAILABLE`. Stored on the session.
+        lobby_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: '^https?://[^\s]+$'
+          description: Optional. `http://` or `https://` URL of the operator's lobby, the target of the game's home button. Returned by `/game/open`.
     LaunchResponse:
       type: object
       required: [game_url]
@@ -607,6 +643,9 @@ components:
       required: [session_token]
       properties:
         session_token: { $ref: '#/components/schemas/Id' }
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only when the launch had a `brand` (see Brand). Not part of the idempotency body comparison.
     AuthenticateResponse:
       type: object
       required: [player_id, currency, precision, balance]
@@ -622,6 +661,9 @@ components:
         session_token: { $ref: '#/components/schemas/Id' }
         player_id: { $ref: '#/components/schemas/Id' }
         game_id: { $ref: '#/components/schemas/Id' }
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only when the launch had a `brand` (see Brand). Not part of the idempotency body comparison.
     BalanceResponse:
       type: object
       required: [balance, currency, precision]
@@ -645,6 +687,9 @@ components:
         amount: { $ref: '#/components/schemas/PositiveAmount' }
         currency: { $ref: '#/components/schemas/Currency' }
         precision: { $ref: '#/components/schemas/Precision' }
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only when the launch had a `brand` (see Brand). Not part of the idempotency body comparison.
     WinRequest:
       type: object
       required: [transaction_id, round_id, player_id, game_id, session_token, amount, currency, precision]
@@ -657,6 +702,9 @@ components:
         amount: { $ref: '#/components/schemas/Amount' }
         currency: { $ref: '#/components/schemas/Currency' }
         precision: { $ref: '#/components/schemas/Precision' }
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only when the launch had a `brand` (see Brand). Not part of the idempotency body comparison.
     RollbackRequest:
       type: object
       required: [transaction_id, bet_transaction_id, round_id, player_id, game_id, session_token]
@@ -669,6 +717,9 @@ components:
         player_id: { $ref: '#/components/schemas/Id' }
         game_id: { $ref: '#/components/schemas/Id' }
         session_token: { $ref: '#/components/schemas/Id' }
+        brand:
+          $ref: '#/components/schemas/Id'
+          description: Optional; present only when the launch had a `brand` (see Brand). Copied from the bet. Not part of the idempotency body comparison.
     GameOpenRequest:
       type: object
       required: [launch_token]
@@ -676,6 +727,10 @@ components:
         launch_token:
           type: string
           description: The `t` query parameter of `game_url`. Single use, valid 5 minutes.
+        device:
+          type: string
+          enum: [mobile, desktop]
+          description: Optional. Recorded on the session. Sent by the game client, never by operators.
     GameOpenResponse:
       type: object
       required: [game_session_id, player_id, game_id, currency, precision, balance]
@@ -686,6 +741,15 @@ components:
         currency: { $ref: '#/components/schemas/Currency' }
         precision: { $ref: '#/components/schemas/Precision' }
         balance: { $ref: '#/components/schemas/Amount' }
+        lobby_url:
+          type: string
+          format: uri
+          description: The launch's `lobby_url`; absent when the launch had none.
+        currency_symbol:
+          type: string
+          minLength: 1
+          maxLength: 8
+          description: Display symbol Polarkast has configured for the currency (for example a coin sign for play coins); absent when none.
         server_seed_commitment:
           type: string
           description: Provably fair operators only. SHA-256 commitment to the player's current server seed, shown before the first round.
@@ -738,9 +802,10 @@ components:
           Fix: a new operation needs a new `transaction_id`; a retry must be byte-for-byte the same body. Not retryable.
         - `TRANSACTION_ROLLED_BACK` (409): bet only; a rollback already references this `transaction_id`. Nothing was
           debited. Fix: do not retry; the round is over. Not retryable.
-        - `NOT_AVAILABLE` (403): launch only. The `game_id` is not enabled for this operator or is switched off, or the
-          session's currency and precision are not enabled for this operator. Fix: launch another game, or ask your
-          Polarkast contact to enable the game or the currency and precision. Not retryable until Polarkast changes
+        - `NOT_AVAILABLE` (403): launch only. The `game_id` is not enabled for this operator, is switched off, or is
+          blocked in the request's `country`; the `brand` is not registered for this operator; or the session's currency
+          and precision are not enabled for this operator. Fix: launch another game, or ask your Polarkast contact to
+          enable the game, register the brand or enable the currency and precision. Not retryable until Polarkast changes
           the setting.
         - `OPERATOR_SUSPENDED` (403): launch only. Polarkast has suspended this operator. Fix: contact Polarkast; no
           launch succeeds until it is resumed. Rounds already open still settle through the wallet. Not retryable.

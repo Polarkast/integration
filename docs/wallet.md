@@ -2,6 +2,8 @@
 
 Implements: [openapi.yaml](openapi.yaml), paths `/wallet/*`, and the sections Transport, Money, Identifiers. Polarkast calls these on the operator's base URL. Every request is signed ([signing.md](signing.md)). Every failure uses the error body in [errors.md](errors.md). Amounts are integers in minor units with `currency` and `precision`.
 
+Every wallet request may carry an optional `brand` (spec: Brand): the brand the player launched under, the same on every call of a session, absent when the launch had none. Use it to pick the right brand's player or ledger; ignore it if you have one brand. It is not part of the idempotency body comparison ([idempotency.md](idempotency.md)); a rollback carries its bet's brand.
+
 Order inside every handler: verify signature, validate fields, then act. Integers are integer literals: `100.0` and `1e2` are `INVALID_REQUEST` (spec: Money).
 
 ## POST /wallet/authenticate

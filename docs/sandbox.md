@@ -53,7 +53,7 @@ curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/
 # -> {"round_id":"...","outcome_index":2,"payout":200,"balance":...}
 ```
 
-`/game/open` fields: `game_session_id` (pass it to `/game/round`), `player_id`, `game_id`, `currency`, `precision`, `balance` (minor units, read from your wallet). On provably fair operators it also returns `server_seed_commitment` (SHA-256 commitment to the server seed, shown before the first round), `client_seed` (the client seed in use) and `next_nonce` (the nonce the next round uses); a verifier needs these three, a plain integration ignores them. Full shapes: the spec.
+`/game/open` fields: `game_session_id` (pass it to `/game/round`), `player_id`, `game_id`, `currency`, `precision`, `balance` (minor units, read from your wallet), `lobby_url` (when launch sent one) and `currency_symbol` (when Polarkast configured one for your currency). It also accepts an optional `device` (`mobile` or `desktop`), which the game client sends, never you. On provably fair operators it also returns `server_seed_commitment` (SHA-256 commitment to the server seed, shown before the first round), `client_seed` (the client seed in use) and `next_nonce` (the nonce the next round uses); a verifier needs these three, a plain integration ignores them. Full shapes: the spec.
 
 Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A repeated `request_id` returns the stored result and places no second bet.
 

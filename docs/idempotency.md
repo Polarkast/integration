@@ -10,7 +10,7 @@ Implements: [openapi.yaml](openapi.yaml), sections Idempotency and Timeouts and 
 3. Known id, any field different or a different call type: return `TRANSACTION_MISMATCH`. Move no money.
 
 Two details (spec: Idempotency):
-- "Identical" compares the fields the spec defines for that call. Unknown fields are ignored: a repeat that differs only in one is a replay. Key order and whitespace do not matter.
+- "Identical" compares the fields the spec defines for that call. Unknown fields are ignored, and so is `brand` (spec: Brand): a repeat that differs only in one is a replay. Key order and whitespace do not matter.
 - Store only the response to a well-formed request (valid signature, fields pass validation). A malformed request (`INVALID_SIGNATURE`, or `INVALID_REQUEST` for bad JSON, a missing, mistyped or out-of-range field, `100.0` or `1e2`) is never stored and does not use up its id. A definitive error decided by business rules is stored, including `INVALID_REQUEST` for an unknown `player_id`.
 
 Make check-and-write atomic: a unique constraint on `transaction_id` and a database transaction around the balance change. Two simultaneous requests with one id must not both move money.

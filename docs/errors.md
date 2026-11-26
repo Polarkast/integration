@@ -20,7 +20,7 @@ Use only codes from `ErrorCode`. Code and HTTP status are the contract; `message
 | `currency` or `precision` differs from the session's (never on rollback) | `CURRENCY_MISMATCH` |
 | Known `transaction_id`, different body or call type; a rollback whose `bet_transaction_id` is a win's or a rollback's id | `TRANSACTION_MISMATCH` |
 | Bet whose id was already rolled back | `TRANSACTION_ROLLED_BACK` |
-| Studio launch only, from Polarkast to you: game not enabled for you or switched off, or your session currency and precision not enabled | `NOT_AVAILABLE` (you receive it; ask Polarkast to enable) |
+| Studio launch only, from Polarkast to you: game not enabled for you, switched off or blocked in the player's `country`, a `brand` you have not registered, or your session currency and precision not enabled | `NOT_AVAILABLE` (you receive it; ask Polarkast to enable or register) |
 | Studio launch only: your operator is suspended | `OPERATOR_SUSPENDED` (you receive it; contact Polarkast) |
 | Your own temporary failure (database down) | `INTERNAL_ERROR` |
 

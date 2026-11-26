@@ -7,6 +7,9 @@ use sha2::Sha256;
 use std::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Sent on most wallet calls: the spec's optional `brand`, which a wallet must accept and ignore for idempotency.
+const BRAND: &str = "conformance_brand";
+
 const USAGE: &str = "usage: conformance --wallet-url <url> --session-token <token> [--expired-session-token <token>]\n  the shared secret is read from POLARKAST_SHARED_SECRET (or --secret, which shows it in the process list)";
 
 struct Fail {
@@ -131,18 +134,18 @@ impl Ctx {
 
     fn bet(&self, id: &str, amount: i64) -> Value {
         json!({"transaction_id": id, "round_id": self.id(), "player_id": self.player, "game_id": "conformance",
-               "session_token": self.token, "amount": amount, "currency": self.cur, "precision": self.prec})
+               "session_token": self.token, "amount": amount, "currency": self.cur, "precision": self.prec, "brand": BRAND})
     }
     fn win(&self, id: &str, amount: i64) -> Value {
         self.bet(id, amount)
     }
     fn rollback(&self, id: &str, bet_id: &str) -> Value {
         json!({"transaction_id": id, "bet_transaction_id": bet_id, "round_id": self.id(), "player_id": self.player,
-               "game_id": "conformance", "session_token": self.token})
+               "game_id": "conformance", "session_token": self.token, "brand": BRAND})
     }
 
     fn balance_req(&self) -> Resp {
-        let b = json!({"session_token": self.token, "player_id": self.player, "game_id": "conformance"});
+        let b = json!({"session_token": self.token, "player_id": self.player, "game_id": "conformance", "brand": BRAND});
         self.post("/wallet/balance", &b)
     }
     fn bal(&self) -> R<i64> {
@@ -249,7 +252,10 @@ fn main() {
     };
 
     // Authenticate fixes player, currency and precision for every later check; without it nothing else can run.
-    let auth = c.post("/wallet/authenticate", &json!({"session_token": c.token}));
+    let auth = c.post(
+        "/wallet/authenticate",
+        &json!({"session_token": c.token, "brand": BRAND}),
+    );
     let b = &auth.body;
     let fix = "Authenticate: returns player_id, currency, precision and balance (integer minor units, at least 1000 for this suite) for a valid session token.";
     match (
@@ -305,11 +311,25 @@ fn main() {
         c.bal_is(b0 - 100, fix)
     });
     c.run("same transaction id with a different body is TRANSACTION_MISMATCH", |c| {
-        let fix = "Idempotency: the same transaction_id with any field different returns TRANSACTION_MISMATCH (HTTP 409) and moves no money.";
+        let fix = "Idempotency: the same transaction_id with any field different (`brand` aside) returns TRANSACTION_MISMATCH (HTTP 409) and moves no money.";
         let id = c.id();
         let b0 = c.bal()?;
         c.money_ok("/wallet/bet", &c.bet(&id, 100), b0 - 100, fix)?;
         c.post("/wallet/bet", &c.bet(&id, 101)).err(409, "TRANSACTION_MISMATCH", fix)?;
+        c.bal_is(b0 - 100, fix)
+    });
+    c.run("idempotency ignores brand", |c| {
+        let fix = "Brand: `brand` is not part of the idempotency body comparison; the same transaction_id and fields with another or no brand replays the original response.";
+        let b0 = c.bal()?;
+        let body = c.bet(&c.id(), 100);
+        let first = c.post("/wallet/bet", &body);
+        first.ok(&c.cur, c.prec, fix)?;
+        let mut other = body.clone();
+        other.as_object_mut().unwrap().remove("brand");
+        let again = c.post("/wallet/bet", &other);
+        if again.status != first.status || again.body != first.body {
+            return Err(again.fail(format!("the original response: {} {}", first.status, first.text), fix));
+        }
         c.bal_is(b0 - 100, fix)
     });
     c.run("transaction id reused by another call type is TRANSACTION_MISMATCH", |c| {
