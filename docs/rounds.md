@@ -12,7 +12,9 @@ Body: exactly one of `round_id` or `transaction_id` (a bet, win or rollback id).
 - `transactions`: every bet, win and rollback of the round in the order Polarkast logged it, each with its `status`. The spec defines each status (`pending`, `succeeded`, `failed`, `needs_reconciliation`, `resolved`) and what to do about it. A `needs_reconciliation` entry is for you and your Polarkast contact to settle; do not guess at it.
 - `round_url`: a link to an HTML page of the round (game, time, every transaction, the outcome, and for provably fair play the proof). Embed or open it; the spec states how long it is valid. It is a bearer link: do not log or share it, and call again for a fresh one when it expires.
 
-Neither the response nor the page contains session tokens, signatures or your raw wallet requests and responses.
+- `hold_and_win`: only for a hold-and-win game such as [4 Star Dragons](four-star-dragons.md): the round's `mode` (`base` or `buy`), the play amount `bet`, the amount debited `cost` (the bet transaction's amount), the win split `win_x100` (lines, collect, feature; hundredths of the play amount) and the player's pots before and after (`null` for a bought round). The page adds the round's key moments and how to replay it from its recorded draws.
+
+Neither the response nor the page contains session tokens, signatures or your raw wallet requests and responses. Fun rounds are never recorded, so they are never found.
 
 ## Check
 Play a round in the sandbox ([sandbox.md](sandbox.md)), then look it up by its `round_id` and again by its bet's `transaction_id`: both list the same transactions with status `succeeded`. Open `round_url` in a browser and see the outcome. A body with a wrong signature gets `INVALID_SIGNATURE`.

@@ -40,7 +40,7 @@ Run the conformance CLI against your wallet ([conformance.md](conformance.md)). 
 Call `POST /v1/launch` on `$POLARKAST_STUDIO_URL` with `$POLARKAST_OPERATOR_ID` and `$POLARKAST_SHARED_SECRET` ([launch.md](launch.md)), using a sandbox test player whose balance is at least 1000 minor units. This must be a different player from the one the conformance CLI used, which moves its player's balance. You get `https://sandbox.polarkast.tech/g/<game_id>?t=<token>`.
 
 ## 5. Play a forced win and a forced loss
-Without a game client, use the sandbox test endpoints (spec: tag `sandbox`; sandbox only, not part of the operator contract). `launch_token` is the `t` query parameter of `game_url`; it works once and is valid for 5 minutes:
+Without a game client, use the game client's own endpoints (spec: tag `game`; not part of the operator contract, you never call them in production). `launch_token` is the `t` query parameter of `game_url`; it works once and is valid for 5 minutes:
 
 ```sh
 curl -s https://sandbox.polarkast.tech/game/open -H 'Content-Type: application/json' \
@@ -58,6 +58,19 @@ curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/
 Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A repeated `request_id` returns the stored result and places no second bet.
 
 Check: after each round, your wallet's balance changed by exactly `-bet + payout` (win: +100, loss: -100 for bet 100), and the `balance` in the response equals your wallet's balance.
+
+## 6. Play 4 Star Dragons
+Once `four-star-dragons` is enabled for your operator, launch it as in step 4 with `"game_id":"four-star-dragons"` and open `game_url` in a browser: that is the real game, playing against your wallet. Without a browser, `/game/open` also returns the play amounts (`bets`), the opening play amount (`bet`) and the player's pots; then play a base round and a bought round (there is no `force_outcome` for this game):
+
+```sh
+curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/json' \
+  -d '{"game_session_id":"<id>","request_id":"h1","bet":<bet>}'
+curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/json' \
+  -d '{"game_session_id":"<id>","request_id":"h2","bet":<bet>,"mode":"buy"}'
+# -> {"round_id":"...","mode":"buy","bet":...,"cost":...,"payout":...,"balance":...,"script":{...}}
+```
+
+Check: after each round, your wallet's balance changed by exactly `-cost + payout`. Two base rounds at one play amount carry the pots: the second round's `script.potsBefore` equals the first one's `script.potsAfter`. Details: [four-star-dragons.md](four-star-dragons.md).
 
 ## What stays human
 - Enabling games, currencies and stake limits, suspending or resuming your operator (through your Polarkast contact).

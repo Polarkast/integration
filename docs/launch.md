@@ -23,6 +23,11 @@ Before it calls your wallet, Polarkast checks the settings it keeps for your ope
 ## Response
 `{"game_url": "..."}`. Redirect or embed the player at `game_url`. The spec states how long it is valid and that it is single-use; call launch again for a new one, never cache it.
 
+## Fun mode
+To let a player try a game with play money, for example from a "Demo" button in your lobby, call the same signed launch with `"mode": "fun"`, `game_id`, `currency`, `language` and optionally `lobby_url`, `brand` and `country`. No player is needed: leave out `session_token` and `player_id`. Polarkast calls no wallet endpoint for a fun session and records none of its rounds, so your wallet and `POST /v1/round` never see them. The currency must be enabled for you; the game uses its precision, stake limits and symbol for the play money. Fun sessions end on their own, launches and rounds have rate limits (`RATE_LIMITED`, HTTP 429, retry after the wait), and a fun session never turns into real play: all of it is in the spec, section Fun mode. For real play, launch again without `mode`.
+
+Check: a fun launch for `four-star-dragons` returns a `game_url` without any call reaching your wallet; open it and play.
+
 ## Check
 Against the sandbox, launch returns a `game_url` for your test player. Pass [conformance.md](conformance.md) first.
 Production credentials and go-live are human steps ([index.md](index.md)).
