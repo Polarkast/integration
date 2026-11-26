@@ -47,7 +47,8 @@ info:
     and changes nothing; retry after a minute (launches) or a second (rounds).
 
     ## Limits
-    - `/game/round` takes Polarkast under 20 ms at the 99th percentile, not counting the operator's wallet calls. A
+    - `/game/round` takes Polarkast under 20 ms at the 99th percentile, not counting the operator's wallet calls; each
+      answer's `Server-Timing` header gives both. A
       round that has not settled within 10 seconds answers `INTERNAL_ERROR` ("still settling") and goes on settling in
       the background; send the same `request_id` again.
     - A hold-and-win `/game/round` response, script included, is at most 32 KiB. Typical sizes over 1,000,000 rounds
@@ -483,6 +484,13 @@ paths:
       responses:
         '200':
           description: Round played and settled.
+          headers:
+            Server-Timing:
+              description: |
+                `app;dur=<ms>, wallet;dur=<ms>`: Polarkast's own time for this request and the time the operator's wallet
+                calls took during it (see Limits). Informational; absent on a refused round. A fun round's wallet time is 0.
+              schema: { type: string }
+              example: 'app;dur=6.7, wallet;dur=41'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GameRoundResponse' }
