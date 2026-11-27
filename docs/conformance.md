@@ -10,7 +10,7 @@ The CLI below runs the same checks on your machine. Use it while your wallet is 
 ## Prepare
 1. Run your wallet where the CLI can reach it.
 2. Create a test player with a balance of at least 1000 minor units and an active session token. The CLI moves this player's balance: use a player for conformance only, and a different player for the sandbox round in [sandbox.md](sandbox.md).
-3. Create a token of an expired session for the same player: a session your wallet issued whose expiry time is in the past (set the expiry back in your session store, or let a short-lived one lapse). It enables the expired-session checks for win and rollback. The reference wallet seeds one from `EXPIRED_SESSION_TOKEN`.
+3. Create a token of an expired session for the same player: a session your wallet issued whose expiry time is in the past (set the expiry back in your session store, or let a short-lived one lapse). It enables the expired-session checks for win and rollback. The reference wallet (`reference/node-express` in this documentation's repository, see its README) seeds one from `EXPIRED_SESSION_TOKEN`, for its one test player; that is the conformance player, so give sandbox rounds another player: add a second player and session to `seedStore` in `src/wallet.ts`.
 4. Use the sandbox shared secret a human reads from the client area ([sandbox.md](sandbox.md)). Pass it from an environment variable or secrets store; do not commit it in scripts.
 
 ## Binary
@@ -21,6 +21,8 @@ Releases are at https://github.com/Polarkast/integration/releases/tag/conformanc
 | Linux x86_64 | `conformance-linux-x86_64` |
 | macOS arm64 | `conformance-macos-arm64` |
 | Windows x86_64 | `conformance-windows-x86_64.exe` |
+
+There is no Intel Mac (x86_64) binary: the release builds only the three above, and the macOS arm64 one does not run on an Intel Mac. Build it from source there (the fallback below).
 
 ```sh
 curl -fL -o conformance https://github.com/Polarkast/integration/releases/download/conformance-latest/conformance-linux-x86_64   # or the asset for your platform

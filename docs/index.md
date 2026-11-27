@@ -12,6 +12,7 @@ Check: each answers a signed request with the documented body.
 ## 2. Sign and verify
 
 Verify `X-Signature` on every request over the raw body, before parsing. See [signing.md](signing.md).
+In Express, mount `express.raw({ type: '*/*' })` on the wallet routes before any global `express.json()`: the JSON parser consumes the body and the signature can no longer be checked.
 Check: a request with a wrong signature gets `INVALID_SIGNATURE`.
 
 ## 3. Idempotency and rollback rules

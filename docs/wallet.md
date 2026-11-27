@@ -4,7 +4,7 @@ Implements: [openapi.yaml](openapi.yaml), paths `/wallet/*`, and the sections Tr
 
 Every wallet request may carry an optional `brand` (spec: Brand): the brand the player launched under, the same on every call of a session, absent when the launch had none. Use it to pick the right brand's player or ledger; ignore it if you have one brand. It is not part of the idempotency body comparison ([idempotency.md](idempotency.md)); a rollback carries its bet's brand.
 
-Order inside every handler: verify signature, validate fields, then act. Integers are integer literals: `100.0` and `1e2` are `INVALID_REQUEST` (spec: Money).
+Order inside every handler: verify signature, validate fields, then act. Integers are integer literals: `100.0` and `1e2` are `INVALID_REQUEST` (spec: Money). `JSON.parse` returns 100 for both, so look at the number as written. In Node 21 or later the reviver's third argument has it: `JSON.parse(text, (key, value, { source }) => ...)`, where `source` is the literal text of a number; reject a number whose `source` is not an integer literal (`/^-?\d+$/`). `parseJson` in `reference/node-express/src/wallet.ts` does this. On older Node, or in another language, use a parser that keeps the literal.
 
 ## POST /wallet/authenticate
 - When: a player launches a game.

@@ -17,10 +17,11 @@ Rules: money is integers in minor units; secrets come from configuration, never 
 5. Add the signed `POST /v1/launch` call per `launch.md`, configured from `POLARKAST_STUDIO_URL`, `POLARKAST_OPERATOR_ID` and `POLARKAST_SHARED_SECRET`.
 6. Start the wallet, create a conformance test player with at least 1000 minor units, a session token and a token of an expired session (expiry in the past), then run:
    `conformance --wallet-url <url> --session-token <token> --expired-session-token <token>` (secret from `POLARKAST_SHARED_SECRET`)
-   Get the binary asset for your platform (`conformance-linux-x86_64`, `conformance-macos-arm64`, `conformance-windows-x86_64.exe`) from https://github.com/Polarkast/integration/releases/tag/conformance-latest (fallback: `cargo build --release -p conformance`).
+   Get the binary asset for your platform (`conformance-linux-x86_64`, `conformance-macos-arm64`, `conformance-windows-x86_64.exe`; none for an Intel Mac, build it there) from https://github.com/Polarkast/integration/releases/tag/conformance-latest (fallback: `cargo build --release -p conformance`).
    Fix each printed failure and rerun (see `conformance.md`). SKIP means not verified; go-live needs zero skips.
 7. Make the wallet reachable over public HTTPS (locally `cloudflared tunnel --url http://localhost:<port>`; the URL changes every run, so a human must save the new one under Integration in the client area), launch against the sandbox with a different test player than conformance used, and play one round per `sandbox.md`. The wallet balance must change by exactly -bet + payout.
 8. Launch `four-star-dragons` and play a base and a bought round per `sandbox.md` step 6 (`four-star-dragons.md`). The wallet balance must change by exactly -cost + payout each time; two base rounds at one play amount carry the pots. `stub` stays the forced-outcome test game.
+9. Force one rollback per `sandbox.md` step 5 (`force_rollback`): your wallet settles a signed rollback and its balance does not change.
 
 ## Check
 The `conformance` command exits 0 with every check PASS and none SKIP, and sandbox rounds of `stub` and `four-star-dragons` (`sandbox.md`) settled against your wallet. If it cannot run for lack of credentials or the binary, stop and ask a human.

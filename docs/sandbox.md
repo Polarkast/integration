@@ -37,7 +37,7 @@ It prints `https://<random>.trycloudflare.com`. That URL changes on every run: k
 Run the conformance CLI against your wallet ([conformance.md](conformance.md)). Do not go on until it exits 0.
 
 ## 4. Launch
-Call `POST /v1/launch` on `$POLARKAST_STUDIO_URL` with `$POLARKAST_OPERATOR_ID` and `$POLARKAST_SHARED_SECRET` ([launch.md](launch.md)), using a sandbox test player whose balance is at least 1000 minor units. This must be a different player from the one the conformance CLI used, which moves its player's balance. You get `https://sandbox.polarkast.tech/g/<game_id>?t=<token>`.
+Call `POST /v1/launch` on `$POLARKAST_STUDIO_URL` with `$POLARKAST_OPERATOR_ID` and `$POLARKAST_SHARED_SECRET` ([launch.md](launch.md)), using a sandbox test player whose balance is at least 1000 minor units. This must be a different player from the one conformance used: that is the player with the expired-session token, and the CLI moves its balance. Sandbox rounds use their own player, with a normal active session. You get `https://sandbox.polarkast.tech/g/<game_id>?t=<token>`.
 
 ## 5. Play a forced win and a forced loss
 Without a game client, use the game client's own endpoints (spec: tag `game`; not part of the operator contract, you never call them in production). `launch_token` is the `t` query parameter of `game_url`; it works once and is valid for 5 minutes:
@@ -55,9 +55,19 @@ curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/
 
 `/game/open` fields: `game_session_id` (pass it to `/game/round`), `player_id`, `game_id`, `currency`, `precision`, `balance` (minor units, read from your wallet), `lobby_url` (when launch sent one) and `currency_symbol` (when Polarkast configured one for your currency). It also accepts an optional `device` (`mobile` or `desktop`), which the game client sends, never you. On provably fair operators it also returns `server_seed_commitment` (SHA-256 commitment to the server seed, shown before the first round), `client_seed` (the client seed in use) and `next_nonce` (the nonce the next round uses); a verifier needs these three, a plain integration ignores them. Full shapes: the spec.
 
-Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A repeated `request_id` returns the stored result and places no second bet.
+Repeat with a new `request_id` and `"force_outcome":0` for a loss (payout 0). A repeated `request_id` returns the stored result and places no second bet. A `stub` round answers only `round_id`, `outcome_index`, `payout` and `balance`; 4 Star Dragons (step 6) adds `mode`, `bet`, `cost` and `script`. For `stub` the cost is the `bet`.
 
 Check: after each round, your wallet's balance changed by exactly `-bet + payout` (win: +100, loss: -100 for bet 100), and the `balance` in the response equals your wallet's balance.
+
+Then force one rollback, which Get started's last step needs. Polarkast sends the bet, then rolls it back instead of playing (sandbox operators only, any game):
+
+```sh
+curl -s https://sandbox.polarkast.tech/game/round -H 'Content-Type: application/json' \
+  -d '{"game_session_id":"<id>","request_id":"rb1","bet":100,"force_rollback":true}'
+# -> {"error":{"code":"INTERNAL_ERROR","message":"The bet did not complete and was rolled back; nothing was debited. ..."}}
+```
+
+Check: your wallet received a `bet` and then a signed `rollback` naming it, and its balance is unchanged. The rollback shows in the client area's live feed, and Get started's rollback step is done. Get started reaches 7 / 7 once a passing conformance run from the client area (not only the CLI) is stored too ([conformance.md](conformance.md)).
 
 ## 6. Play 4 Star Dragons
 Launch `four-star-dragons` as in step 4 with `"game_id":"four-star-dragons"` and open `game_url` in a browser: that is the real game, playing against your wallet. Without a browser, `/game/open` also returns the play amounts (`bets`), the opening play amount (`bet`) and the player's pots; then play a base round and a bought round (there is no `force_outcome` for this game):
