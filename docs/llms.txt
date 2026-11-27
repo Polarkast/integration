@@ -18,6 +18,7 @@
 - [sandbox.md](sandbox.md): the hosted sandbox: credentials and wallet registration, expose your wallet, launch, play a forced win and loss, then 4 Star Dragons.
 - [four-star-dragons.md](four-star-dragons.md): the game 4 Star Dragons: what your wallet sees, play amounts, bought rounds, fun mode.
 - [nova-forge.md](nova-forge.md): the game Nova Forge: what your wallet sees, play amounts, the ante, bought rounds, fun mode.
+- [rivermeet.md](rivermeet.md): the game Rivermeet: what your wallet sees, play amounts, the ante, the four bought modes, fun mode.
 - [openapi.yaml](openapi.yaml): the spec. Consult it for every field, range and status.
 - [skills/integrate/SKILL.md](skills/integrate/SKILL.md): the same procedure as a skill.
 

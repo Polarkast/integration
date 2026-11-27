@@ -19,7 +19,7 @@ info:
       is written down and so a round can be played without the client, for example in the sandbox.
 
     ## Games
-    Every `game_id` belongs to one of three families.
+    Every `game_id` belongs to one of four families.
     - Weighted (`stub`, the sandbox's test game): a bet, then one outcome from the game's table.
     - Hold-and-win (`four-star-dragons`) and pay-anywhere (`nova-forge`): the player picks a play amount (`bet`) from
       the session's `bets` and a round `mode`. A `base` round costs the play amount. A `buy` round starts the game's
@@ -31,6 +31,30 @@ info:
       for the currency apply to it, not to the play amount. The round's win is a whole number of hundredths of the
       play amount (`script.win`), never above the game's `cap`; the wallet win's `amount` is
       `floor(bet * script.win / 100)`.
+
+    - Canals (`rivermeet`): the same play amount and `base` round, with five more modes instead of `buy`. `ante` is a
+      base round with a better chance of the feature, costing `bet * costs.ante / 100`; `bonus`, `torrent`,
+      `canal` and `flood` start the feature, High water, at once and cost `bet * costs.bonus / 100` and so on
+      (`bonus` and `torrent` share a price). Every mode but `base` is offered only at play amounts where that cost is
+      a whole number of minor units (`bet * costs.<mode>` a multiple of 100; with Rivermeet's costs: `ante` and
+      `canal` at multiples of 20, `bonus` and `torrent` at multiples of 50, `flood` at any play amount), so that the
+      round's return is the game's at every play amount; a round in another mode at any other play amount is
+      `INVALID_REQUEST`. `costs` is in the game's display model (`/game/open`), in hundredths of
+      the play amount, and the same rules apply as for the games above: the wallet bet's `amount` is the round's cost,
+      the stake limits apply to it, the win is a whole number of hundredths of the play amount (`script.win`) never
+      above `cap`, and the wallet win's `amount` is `floor(bet * script.win / 100)`. `buy` in a canals game is
+      `INVALID_REQUEST`, as are `bonus`, `torrent`, `canal` and `flood` in any other game.
+
+      Canals: nothing carries from round to round. The board is 7 by 7. Five or more of one paying symbol touching
+      side to side are a cluster; it pays by its size, clears, and the symbols above fall and new ones drop in, until
+      nothing pays; a spin pays at most `maxTumbles` times (50). Every cell a cluster clears becomes a canal for the
+      rest of the round. A canal cell is watered when canal cells joined side to side lead from it to the first
+      column (the Euphrates) or the last (the Tigris); the rivers meet when one connected canal touches both. A base
+      spin that meets the rivers starts High water in the same round, carrying the canal that met them: `spins.high`
+      spins, `extraSpins` more when the rivers first meet inside it (at once in `canal` and `flood`, which start with
+      one or three rows across as canals). Each High water spin's wins are multiplied by the level the watered
+      cells set when it starts (`ladders`; `torrent` has its own ladder and `spins.torrent` spins). Watering all 49
+      cells is the whole land: the round pays `cap` at once. A round never pays more than `cap`.
 
       Pay-anywhere: nothing carries from round to round. A spin pays wherever enough of one symbol lands on its 6 by
       5 board, and its wins tumble out: they go, the rest fall, new symbols drop in, and the board pays again; a spin
@@ -55,7 +79,7 @@ info:
     precision, the games, the number of rounds, the bet of each round and an expiry. The operator chooses the
     `reward_id`; it is unique per operator, and creating the same reward again is safe (see Idempotency).
     - The bet must be a valid stake for every game of the reward, in `GET /v1/games` terms: within the currency's
-      `min` and `max` and, for a hold-and-win or pay-anywhere game, one of its `bets`. The stake limits are checked
+      `min` and `max` and, for a hold-and-win, pay-anywhere or canals game, one of its `bets`. The stake limits are checked
       when the reward is created; a later change to them does not affect a reward that exists.
     - The player plays the rounds in any of the reward's games, in a session of that player, currency and precision,
       until `expires_at`. `/game/open` lists the session's usable rewards and the game client plays one free round by
@@ -92,6 +116,8 @@ info:
     - A hold-and-win `/game/round` response, script included, is at most 32 KiB. Typical sizes over 1,000,000 rounds
       of each mode: a base round 0.4 KiB (99% under 1 KiB, the largest 4.4 KiB), a bought round 1.4 KiB (99% under
       2.2 KiB, the largest 3 KiB).
+    - A canals `/game/round` response has no fixed bound either (`maxTumbles` a spin, at most twice `spins` spins in
+      High water), so a client accepts any size.
     - A pay-anywhere `/game/round` response has no fixed bound short of the game's own (`maxTumbles` a spin,
       `maxFreeSpins` a feature), so a client accepts any size. Over 1,000,000 rounds of each mode, script included: a
       base or ante round 0.5 KiB (99% under 1.1 KiB, the largest seen about 17 KiB), a bought round 6 KiB (99% under
@@ -333,8 +359,13 @@ paths:
         between the base spin and the free spins. Its page shows the same, the round's key moments (free spins
         started, free spins added, the cap reached) and how to replay it: the draws, in the order they were used,
         reproduce the round on the game and engine versions the page names; on a provably fair round, the revealed
-        server seed, the client seed and the nonce reproduce the draws. Fun rounds are not recorded and are never
-        found. A free round (see Free rounds) has `reward_id`, no bet transaction, only its win, and a `cost` of 0.
+        server seed, the client seed and the nonce reproduce the draws.
+        A canals round has `canals` instead: its mode, play amount, the amount debited and the win split between the
+        base spin and High water. Its page shows the same, the round's key moments (the rivers met, High water
+        started, spins added, the whole land, the cap reached) and how to replay it: the draws, in the order they were
+        used, reproduce the round on the game and engine versions the page names; on a provably fair round, the
+        revealed server seed, the client seed and the nonce reproduce the draws. Fun rounds are not recorded and are
+        never found. A free round (see Free rounds) has `reward_id`, no bet transaction, only its win, and a `cost` of 0.
       parameters:
         - name: X-Operator-Id
           in: header
@@ -396,6 +427,20 @@ paths:
                       bet: 100
                       cost: 125
                       win_x100: { base: 300, free: 9100 }
+                canals:
+                  value:
+                    round_id: 5a0c8e13-7d42-4b96-a3f1-2c8d6e0b4f79
+                    game_id: rivermeet
+                    round_url: 'https://play.polarkast.example/rounds/rt_9b3f1c5d7e2a4086b4d9e1a3c5f70268'
+                    expires_at: '2026-01-15T10:15:00.000Z'
+                    transactions:
+                      - { transaction_id: 6f1a3c8e-2b95-4d07-9e4a-b0c7d5e18a32, kind: bet, amount: 100, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.120Z' }
+                      - { transaction_id: 4d8e0b27-9a31-4c65-b2f8-1e7a6c3d9054, kind: win, amount: 4290, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.290Z' }
+                    canals:
+                      mode: base
+                      bet: 100
+                      cost: 100
+                      win_x100: { base: 4090, high: 200 }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidSignature' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -410,8 +455,8 @@ paths:
         `X-Operator-Id` and `X-Signature`, the HMAC of the empty body (see Signing). Moves no money; safe to repeat.
         Lists every game Polarkast offers that has an RTP, whether or not it is enabled for this operator, ordered by
         `game_id`. Each RTP variant of a game is its own `game_id` with its own `rtp`. The RTP comes from the game's
-        math, the same source its certification uses: a weighted game's from its outcome table, a hold-and-win or
-        pay-anywhere game's from the verified simulation of each mode. A game without an RTP is not listed.
+        math, the same source its certification uses: a weighted game's from its outcome table, a hold-and-win,
+        pay-anywhere or canals game's from the verified simulation of each mode. A game without an RTP is not listed.
         `enabled` says whether this operator can launch the game now. `stakes` has one entry per currency enabled for
         the operator, with the limits `/v1/launch` and `/game/round` apply; a reward's `bet` must be valid in them (see
         Free rounds). A game being retired has an `end_date` while it is still listed.
@@ -598,12 +643,13 @@ paths:
         has its play-money balance instead). The optional `device` is recorded on the session; operators never send
         it, the game client does. The response carries the launch's `lobby_url` (the target of the game's home button)
         and the currency's `currency_symbol` when Polarkast has configured one.
-        For a hold-and-win or pay-anywhere game it also carries what the client needs to draw the game without its
+        For a hold-and-win, pay-anywhere or canals game it also carries what the client needs to draw the game without its
         engine: the display model (`game`), the play amounts this session may use (`bets`), the opening play amount
         (`bet`) and the operator's `stake_limits`, which apply to the amount a round debits; a hold-and-win game also
         carries the pots at the opening play amount (`pots`, warm-started if the player has never used it, see Games).
-        A bought or ante round is possible at a play amount whose cost is at most `stake_limits.max`, and an ante round
-        only where its cost is a whole number of minor units (see Games).
+        A bought or ante round is possible at a play amount whose cost is at most `stake_limits.max`, and a pay-anywhere
+        ante round or a canals round in any mode but `base` only where its cost is a whole number of minor units (see
+        Games).
         A money session also carries `rewards`: the player's rewards this session can play now (see Free rounds).
       security: []
       requestBody:
@@ -708,6 +754,33 @@ paths:
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 0
+                canals:
+                  value:
+                    game_session_id: 7e3c0a52-1f68-4b94-8d27-c5a9e1b0f436
+                    player_id: player-42
+                    game_id: rivermeet
+                    currency: EUR
+                    precision: 2
+                    balance: 100000
+                    currency_symbol: '€'
+                    game:
+                      kind: 'canals'
+                      id: 'rivermeet'
+                      version: 1
+                      name: 'Rivermeet'
+                      symbols: [{id: 0, key: 'barley', name: 'Barley'}, {id: 1, key: 'dates', name: 'Dates'}, {id: 2, key: 'fish', name: 'Fish'}, {id: 3, key: 'reeds', name: 'Reeds'}, {id: 4, key: 'seal', name: 'Lapis seal'}, {id: 5, key: 'lyre', name: 'Bull lyre'}, {id: 6, key: 'helmet', name: 'Gold helmet'}, {id: 7, key: 'hoe', name: 'Gold hoe'}]
+                      pays: [[40, 70, 130, 230, 420, 750, 1350, 2420, 4360, 7860, 14140, 25450], [40, 70, 130, 230, 420, 750, 1350, 2420, 4360, 7860, 14140, 25450], [50, 100, 170, 310, 550, 1000, 1800, 3230, 5820, 10470, 18850, 33930], [50, 100, 170, 310, 550, 1000, 1800, 3230, 5820, 10470, 18850, 33930], [80, 140, 260, 460, 830, 1500, 2690, 4850, 8730, 15710, 28280, 50900], [120, 210, 380, 690, 1250, 2240, 4040, 7270, 13090, 23570, 42420, 76350], [170, 310, 560, 1000, 1800, 3240, 5840, 10510, 18910, 34040, 61270, 110280]]
+                      ladders: { high: [[0, 1], [7, 2], [14, 3], [21, 5], [28, 8], [35, 12], [42, 20]], torrent: [[0, 1], [7, 3], [14, 5], [21, 9], [28, 17], [35, 32], [42, 66]] }
+                      spins: { high: 10, torrent: 7 }
+                      extraSpins: 5
+                      cap: 2500000
+                      costs: { ante: 135, bonus: 13194, torrent: 13194, canal: 19005, flood: 29300 }
+                    bets: [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]
+                    bet: 100
+                    stake_limits: { min: 10, max: 1000000 }
+                    server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
+                    client_seed: polarkast
+                    next_nonce: 0
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '403': { $ref: '#/components/responses/InvalidSession' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -778,6 +851,13 @@ paths:
         The response carries
         the round's `script`: the base spin (none for a bought round) and any free spins, each board with its tumbles,
         and the win split (`baseWin`, `freeWin`). `force_outcome` is not available (`INVALID_REQUEST`).
+        Canals games: `bet` is a play amount from the session's `bets` (otherwise `INVALID_REQUEST`) and `mode` is
+        `base` (the default), `ante`, `bonus`, `torrent`, `canal` or `flood` (the last five only at play amounts where
+        the cost is a whole number of minor units, otherwise `INVALID_REQUEST`); the wallet bet is the round's `cost`
+        (see Games), and the stake limits apply to it. Nothing is kept between rounds. The response carries the round's
+        `script`: the base spin (none for a bought round), the canals a `canal` or `flood` round starts with, and
+        High water's spins, each board with its tumbles, and the win split (`baseWin`, `highWin`).
+        `force_outcome` is not available (`INVALID_REQUEST`).
         `ante` in any other game, and `buy` in a weighted game, is `INVALID_REQUEST`.
         Fun sessions: the same, against the session's play-money balance with no wallet call; more than the fun round
         rate limit is `RATE_LIMITED`. A `reward_id` in a fun session is `INVALID_REQUEST`.
@@ -799,6 +879,7 @@ paths:
               forced_win: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r1, bet: 100, force_outcome: 2 } }
               bought: { value: { game_session_id: 2c7d1e90-6a3b-4f58-8e21-9d0c4b7a5f13, request_id: r7, bet: 100, mode: buy } }
               ante: { value: { game_session_id: 6d2b9f41-0e7a-4c35-b8d1-3a9e5c7f0b24, request_id: r3, bet: 100, mode: ante } }
+              canals_bonus: { value: { game_session_id: 7e3c0a52-1f68-4b94-8d27-c5a9e1b0f436, request_id: r5, bet: 100, mode: bonus } }
               free_round: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r2, bet: 100, reward_id: welcome-42 } }
       responses:
         '200':
@@ -836,6 +917,16 @@ paths:
                     payout: 1800
                     balance: 101700
                     script: { mode: 'base', base: { grid: [2, 5, 10, 0, 0, 5, 0, 3, 1, 5, 4, 2, 5, 1, 7, 3, 4, 5, 2, 0, 10, 5, 5, 1, 5, 0, 2, 3, 3, 1], multipliers: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0], tumbles: [{ wins: [{ symbol: 5, count: 8, pay: 200, cells: [1, 5, 9, 12, 17, 21, 22, 24] }], win: 200, added: [[[3, 0]], [[0, 0], [0, 0]], [[2, 0]], [[3, 0]], [[3, 0], [1, 0], [1, 0]], []] }], raw: 200, multiplierSum: 9, scatters: 0, scatterPay: 0, win: 1800 }, free: [], win: 1800, baseWin: 1800, freeWin: 0, triggered: false, capped: false }
+                canals:
+                  summary: A base round whose 11-cell cluster of Bull lyres meets the rivers, then High water plays 10 spins and wins 2x
+                  value:
+                    round_id: 5a0c8e13-7d42-4b96-a3f1-2c8d6e0b4f79
+                    mode: base
+                    bet: 100
+                    cost: 100
+                    payout: 4290
+                    balance: 104190
+                    script: {mode: 'base', base: {grid: [6, 1, 5, 1, 4, 2, 0, 3, 5, 5, 4, 6, 3, 0, 1, 5, 3, 2, 0, 4, 2, 3, 5, 5, 3, 5, 2, 6, 1, 5, 4, 6, 6, 4, 3, 5, 5, 5, 4, 1, 6, 6, 5, 2, 4, 4, 6, 6, 2], multiplier: 1, tumbles: [{clusters: [{symbol: 5, size: 11, cells: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], win: 4040}], win: 4040, cleared: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], canals: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], watered: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], met: true, added: [[6], [5, 4], [6], [5, 3], [1], [0, 3, 1], [4]]}, {clusters: [{symbol: 3, size: 5, cells: [9, 16, 22, 23, 24], win: 50}], win: 50, cleared: [9, 16, 22, 23, 24], canals: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], watered: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], met: true, added: [[], [4], [3], [6, 1, 4], [], [], []]}], met: true, carried: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], win: 4090}, start: [], highSpins: 10, high: [{grid: [0, 6, 7, 1, 3, 1, 3, 0, 3, 3, 6, 3, 4, 3, 3, 4, 2, 0, 0, 1, 3, 3, 6, 4, 5, 6, 4, 3, 4, 5, 6, 2, 4, 2, 1, 6, 5, 4, 2, 1, 6, 3, 3, 0, 0, 2, 4, 1, 5], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 9, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [3, 1, 6, 4, 5, 5, 6, 3, 1, 0, 0, 4, 5, 2, 6, 0, 1, 5, 4, 3, 0, 3, 3, 3, 6, 5, 4, 1, 4, 2, 6, 6, 0, 1, 0, 3, 0, 2, 5, 3, 0, 2, 1, 0, 6, 6, 1, 5, 6], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 8, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [0, 6, 3, 5, 3, 1, 3, 3, 2, 3, 3, 2, 0, 4, 2, 3, 0, 4, 3, 2, 0, 6, 6, 1, 5, 5, 6, 1, 7, 4, 2, 3, 5, 6, 3, 5, 2, 2, 0, 4, 0, 6, 6, 3, 3, 3, 1, 3, 6], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 7, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [2, 2, 0, 1, 1, 1, 5, 5, 1, 4, 0, 1, 3, 3, 6, 3, 4, 0, 5, 5, 3, 0, 7, 1, 0, 6, 3, 4, 0, 4, 0, 4, 3, 2, 3, 1, 1, 3, 5, 0, 0, 6, 6, 4, 1, 0, 6, 4, 3], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 6, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [6, 3, 3, 4, 1, 3, 5, 3, 0, 3, 3, 1, 0, 1, 3, 0, 5, 0, 2, 2, 3, 2, 2, 4, 3, 5, 3, 4, 4, 3, 4, 3, 5, 6, 3, 2, 4, 4, 1, 5, 3, 3, 3, 3, 6, 3, 0, 1, 2], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 5, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [3, 3, 0, 6, 3, 1, 1, 3, 3, 6, 3, 0, 6, 2, 3, 0, 1, 3, 0, 3, 0, 3, 1, 4, 4, 3, 1, 3, 1, 0, 7, 0, 3, 1, 1, 4, 5, 3, 1, 4, 5, 1, 1, 5, 3, 6, 3, 4, 3], multiplier: 2, tumbles: [{clusters: [{symbol: 3, size: 6, cells: [0, 1, 7, 8, 14, 21], win: 100}], win: 200, cleared: [0, 1, 7, 8, 14, 21], canals: [0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 22, 23, 24, 29, 35, 36, 37, 42], watered: [0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 22, 23, 24, 29, 35, 36, 37, 42], met: true, added: [[0, 6], [6, 3], [3], [3], [], [], []]}], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 4, win: 200, total: 200, capped: false, wholeLand: false}, {grid: [5, 5, 4, 6, 3, 3, 2, 3, 0, 2, 0, 5, 4, 4, 1, 4, 6, 3, 3, 6, 7, 6, 0, 7, 6, 4, 2, 3, 5, 6, 5, 3, 2, 5, 6, 4, 2, 2, 4, 4, 7, 3, 6, 5, 1, 5, 2, 6, 3], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 3, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [4, 5, 1, 5, 5, 2, 3, 5, 0, 1, 0, 4, 4, 2, 1, 0, 0, 4, 1, 3, 2, 4, 0, 3, 1, 6, 4, 5, 1, 6, 3, 2, 6, 3, 6, 2, 2, 0, 3, 5, 6, 3, 1, 0, 3, 0, 6, 5, 5], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 2, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [0, 0, 6, 0, 5, 3, 6, 2, 3, 3, 0, 3, 1, 6, 4, 6, 4, 0, 1, 0, 4, 3, 2, 5, 2, 4, 5, 0, 4, 5, 2, 4, 2, 3, 3, 6, 3, 6, 1, 6, 0, 4, 0, 5, 3, 5, 4, 6, 4], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 1, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [6, 3, 3, 1, 3, 2, 4, 1, 1, 4, 4, 0, 0, 6, 6, 2, 4, 5, 5, 4, 0, 6, 1, 4, 3, 4, 0, 3, 0, 4, 0, 2, 6, 2, 4, 3, 5, 1, 5, 3, 6, 0, 7, 6, 0, 4, 6, 2, 3], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 0, win: 0, total: 200, capped: false, wholeLand: false}], win: 4290, baseWin: 4090, highWin: 200, triggered: true, capped: false, wholeLand: false}
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '402': { $ref: '#/components/responses/InsufficientFunds' }
         '403': { $ref: '#/components/responses/RoundForbidden' }
@@ -1169,6 +1260,7 @@ components:
           items: { $ref: '#/components/schemas/RoundTransaction' }
         hold_and_win: { $ref: '#/components/schemas/HoldAndWinRound' }
         pay_anywhere: { $ref: '#/components/schemas/PayAnywhereRound' }
+        canals: { $ref: '#/components/schemas/CanalsRound' }
         reward_id:
           $ref: '#/components/schemas/Id'
           description: Present only for a free round (see Free rounds), which has no bet transaction.
@@ -1189,6 +1281,23 @@ components:
           properties:
             base: { type: integer, minimum: 0, description: 'The base spin, its scatter pay included; 0 for a bought round.' }
             free: { type: integer, minimum: 0, description: The free spins. }
+    CanalsRound:
+      type: object
+      description: Canals rounds only; absent for other games.
+      required: [mode, bet, cost, win_x100]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited, the bet transaction's `amount`; 0 for a free round.
+        win_x100:
+          type: object
+          description: The win split, in hundredths of the play amount. The payout is `floor(bet * (base + high) / 100)`.
+          required: [base, high]
+          properties:
+            base: { type: integer, minimum: 0, description: 'The base spin; 0 for a bought round.' }
+            high: { type: integer, minimum: 0, description: High water. }
     HoldAndWinRound:
       type: object
       description: Hold-and-win rounds only; absent for other games.
@@ -1348,14 +1457,15 @@ components:
             reward's, and the reward is neither cancelled nor expired and has rounds left. Soonest `expires_at` first.
           items: { $ref: '#/components/schemas/OpenReward' }
         game:
-          description: Hold-and-win and pay-anywhere games only. The display model; `kind` tells the families apart.
+          description: Hold-and-win, pay-anywhere and canals games only. The display model; `kind` tells the families apart.
           oneOf:
             - $ref: '#/components/schemas/HoldAndWinGame'
             - $ref: '#/components/schemas/PayAnywhereGame'
+            - $ref: '#/components/schemas/CanalsGame'
         bets:
           type: array
           description: |
-            Hold-and-win and pay-anywhere games only. The play amounts this session may use, smallest first: the
+            Hold-and-win, pay-anywhere and canals games only. The play amounts this session may use, smallest first: the
             operator's minimum stake for the currency, then every amount of 1, 2 or 5 times a power of ten minor units
             above it, up to the maximum stake, at most 16 amounts in all.
           minItems: 1
@@ -1363,13 +1473,13 @@ components:
           items: { $ref: '#/components/schemas/PositiveAmount' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: Hold-and-win and pay-anywhere games only. The opening play amount, one of `bets`; the play amount of the player's last base or ante round in this game and currency when it is in `bets`, otherwise the smallest.
+          description: Hold-and-win, pay-anywhere and canals games only. The opening play amount, one of `bets`; the play amount of the player's last base or ante round in this game and currency when it is in `bets`, otherwise the smallest.
         pots:
           $ref: '#/components/schemas/Pots'
           description: Hold-and-win only. The pots at the opening play amount.
         stake_limits:
           type: object
-          description: Hold-and-win and pay-anywhere games only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
+          description: Hold-and-win, pay-anywhere and canals games only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
           required: [min, max]
           properties:
             min: { $ref: '#/components/schemas/PositiveAmount' }
@@ -1406,10 +1516,10 @@ components:
         request_id: { type: string, description: 'Idempotency key, unique per game session.' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: The stake of a weighted round; the play amount of a hold-and-win or pay-anywhere round, which debits its `cost`.
+          description: The stake of a weighted round; the play amount of a hold-and-win, pay-anywhere or canals round, which debits its `cost`.
         mode:
           $ref: '#/components/schemas/RoundMode'
-          description: Optional, default `base`. `buy` for hold-and-win and pay-anywhere games; `ante` for pay-anywhere games only.
+          description: Optional, default `base`. `buy` for hold-and-win and pay-anywhere games; `ante` for pay-anywhere and canals games; `bonus`, `torrent`, `canal` and `flood` for canals games only.
         force_outcome:
           type: integer
           minimum: 0
@@ -1421,11 +1531,12 @@ components:
           $ref: '#/components/schemas/Id'
           description: Optional. Plays one free round of this reward, one of `/game/open`'s `rewards` (see Free rounds).
     GameRoundResponse:
-      description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win` or `pay_anywhere`). Their required fields differ, so a response matches only its own."
+      description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win`, `pay_anywhere` or `canals`). Their required fields differ, so a response matches only its own."
       anyOf:
         - $ref: '#/components/schemas/WeightedRoundResponse'
         - $ref: '#/components/schemas/HoldAndWinRoundResponse'
         - $ref: '#/components/schemas/PayAnywhereRoundResponse'
+        - $ref: '#/components/schemas/CanalsRoundResponse'
     WeightedRoundResponse:
       type: object
       required: [round_id, outcome_index, payout, balance]
@@ -1475,10 +1586,26 @@ components:
         balance: { $ref: '#/components/schemas/Amount' }
         script: { $ref: '#/components/schemas/PayAnywhereScript' }
         reward: { $ref: '#/components/schemas/RoundReward' }
+    CanalsRoundResponse:
+      type: object
+      required: [round_id, mode, bet, cost, payout, balance, script]
+      properties:
+        round_id: { type: string, description: 'For a fun round, an id for the client only: it is never recorded.' }
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited by the wallet bet; 0 for a free round.
+        payout:
+          $ref: '#/components/schemas/Amount'
+          description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
+        balance: { $ref: '#/components/schemas/Amount' }
+        script: { $ref: '#/components/schemas/CanalsScript' }
+        reward: { $ref: '#/components/schemas/RoundReward' }
     RoundMode:
       type: string
-      enum: [base, ante, buy]
-      description: '`base` in every game; `buy` in hold-and-win and pay-anywhere games; `ante` in pay-anywhere games (see Games).'
+      enum: [base, ante, buy, bonus, torrent, canal, flood]
+      description: '`base` in every game; `buy` in hold-and-win and pay-anywhere games; `ante` in pay-anywhere and canals games; `bonus`, `torrent`, `canal` and `flood` in canals games (see Games).'
     Pots:
       type: array
       description: The four pots' counts, in the order of the display model's `pots`; each from 0 to `potSize`, and a pot at `potSize` is full.
@@ -1866,7 +1993,7 @@ components:
             required: [mode, cost_x100, rtp]
             properties:
               mode: { $ref: '#/components/schemas/RoundMode' }
-              cost_x100: { type: integer, minimum: 1, description: 'What a round of this mode costs, in hundredths of the play amount: 100 for `base`, else the display model''s `buyCost` or `anteCost`.' }
+              cost_x100: { type: integer, minimum: 1, description: 'What a round of this mode costs, in hundredths of the play amount: 100 for `base`, else the display model''s `buyCost`, `anteCost` or `costs`.' }
               rtp: { type: integer, minimum: 0, description: 'The return of a round of this mode, from the game''s math.' }
         enabled:
           type: boolean
@@ -1915,7 +2042,7 @@ components:
         bets:
           type: array
           description: |
-            Hold-and-win and pay-anywhere games only. The play amounts a session in this currency offers, as
+            Hold-and-win, pay-anywhere and canals games only. The play amounts a session in this currency offers, as
             `/game/open`'s `bets`. A reward's `bet` for this game must be one of them.
           minItems: 1
           maxItems: 16
@@ -1941,7 +2068,7 @@ components:
         rounds: { type: integer, minimum: 1, maximum: 1000, description: The number of free rounds. }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: The bet of each free round in minor units, a valid stake for every game (see Free rounds); a hold-and-win or pay-anywhere round's play amount.
+          description: The bet of each free round in minor units, a valid stake for every game (see Free rounds); a hold-and-win, pay-anywhere or canals round's play amount.
         expires_at:
           type: string
           format: date-time
@@ -1977,6 +2104,161 @@ components:
           $ref: '#/components/schemas/Amount'
           description: The winnings of its free rounds so far in minor units, credited or still being sent.
         created_at: { type: string, format: date-time }
+    CanalsGame:
+      type: object
+      description: |
+        Canals only. What the client draws and explains, without the engine: names, pays, High water's levels and
+        prices. Amounts (`pays`, `cap`, `costs`) are in hundredths of the play amount. It holds no weights or odds;
+        the game's RTP is on its game sheet. The board is 7 by 7, a cluster is 5 or more cells.
+      required: [kind, id, version, name, symbols, pays, ladders, spins, extraSpins, cap, costs]
+      properties:
+        kind: { type: string, const: canals }
+        id: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1, description: "The game's version; rounds record it." }
+        name: { type: string }
+        symbols:
+          type: array
+          description: 'By symbol id: 0 to 6 pay, 7 is the wild (the gold hoe), which joins the clusters of every paying symbol.'
+          minItems: 8
+          maxItems: 8
+          items:
+            type: object
+            required: [id, key, name]
+            properties:
+              id: { type: integer, minimum: 0, maximum: 7 }
+              key: { type: string }
+              name: { type: string }
+        pays:
+          type: array
+          description: 'Per paying symbol (ids 0 to 6), what a cluster pays by its size: the first entry for 5 cells, the next for 6, and so on; the last entry for every larger cluster.'
+          minItems: 7
+          maxItems: 7
+          items: { type: array, minItems: 1, items: { type: integer, minimum: 1 } }
+        ladders:
+          type: object
+          description: 'High water''s multipliers, as `[watered, multiplier]` steps in rising order: a spin''s multiplier is the last step whose `watered` is at most the cells watered when the spin starts. `high` is the ladder of every mode but `torrent`.'
+          required: [high, torrent]
+          properties:
+            high: { type: array, minItems: 1, items: { type: array, minItems: 2, maxItems: 2, items: { type: integer, minimum: 0 } } }
+            torrent: { type: array, minItems: 1, items: { type: array, minItems: 2, maxItems: 2, items: { type: integer, minimum: 0 } } }
+        spins:
+          type: object
+          description: The spins High water starts with.
+          required: [high, torrent]
+          properties:
+            high: { type: integer, minimum: 1, description: 'In every mode but `torrent`; `canal` and `flood` add `extraSpins` to it at once.' }
+            torrent: { type: integer, minimum: 1, description: "In `torrent`." }
+        extraSpins: { type: integer, minimum: 0, description: "Spins added, once, when the rivers first meet inside High water." }
+        cap: { type: integer, minimum: 1, description: 'The most one round pays, base spin and High water together.' }
+        costs:
+          type: object
+          description: 'What each mode but `base` (100) costs. A mode is offered only at play amounts where `bet * cost` is a multiple of 100 (see Games).'
+          required: [ante, bonus, torrent, canal, flood]
+          properties:
+            ante: { type: integer, minimum: 1 }
+            bonus: { type: integer, minimum: 1 }
+            torrent: { type: integer, minimum: 1 }
+            canal: { type: integer, minimum: 1 }
+            flood: { type: integer, minimum: 1 }
+    CanalsScript:
+      type: object
+      description: |
+        One round, decided in full by the server; the client replays it as it is. Amounts are in hundredths of the play
+        amount. Cells are `column * 7 + row` on the 7 by 7 board, row 0 at the top, column 0 the Euphrates and column 6
+        the Tigris. A bought round has no base spin (`base` is `null`); a `canal` or `flood` round lists the canals it
+        starts with in `start`. High water plays when the base spin's canals met the rivers (`base.met`) and neither the
+        whole land nor `cap` ended the round, or at once in a bought round; `high` is empty otherwise.
+      required: [mode, base, start, highSpins, high, win, baseWin, highWin, triggered, capped, wholeLand]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        base:
+          oneOf: [{ $ref: '#/components/schemas/CanalsBaseSpin' }, { type: 'null' }]
+        start:
+          type: array
+          description: The canals `canal` and `flood` start with, ascending; empty in any other mode.
+          items: { type: integer, minimum: 0, maximum: 48 }
+        highSpins: { type: integer, minimum: 0, description: "The spins High water started with, extra spins included; 0 when it did not play." }
+        high:
+          type: array
+          description: High water's spins, in order.
+          items: { $ref: '#/components/schemas/CanalsHighSpin' }
+        win: { type: integer, minimum: 0, description: '`baseWin + highWin`, at most `cap`; `cap` for the whole land.' }
+        baseWin: { type: integer, minimum: 0, description: "The base spin's `win`; 0 for a bought round." }
+        highWin: { type: integer, minimum: 0, description: "High water's wins added together." }
+        triggered: { type: boolean, description: "High water was due: the base spin's canals met the rivers and the round was not already over, or a bought round." }
+        capped: { type: boolean, description: "The round reached `cap`." }
+        wholeLand: { type: boolean, description: "All 49 cells were watered; the round paid `cap` and ended there." }
+    CanalsBoard:
+      type: object
+      description: One board as it landed and its tumbles.
+      required: [grid, multiplier, tumbles]
+      properties:
+        grid:
+          type: array
+          description: The symbol ids as the board landed.
+          minItems: 49
+          maxItems: 49
+          items: { type: integer, minimum: 0, maximum: 7 }
+        multiplier: { type: integer, minimum: 1, description: "What this board's wins are multiplied by; 1 in the base spin, the ladder's level at the spin's start in High water." }
+        tumbles:
+          type: array
+          description: In order; at most `maxTumbles` (50). A board that reached it is not paid again, whatever stands on it.
+          items: { $ref: '#/components/schemas/CanalsTumble' }
+    CanalsTumble:
+      type: object
+      description: |
+        One tumble. Every cell of each winning cluster goes at once and becomes a canal. In each column the symbols
+        that stay fall to the bottom in their order and new symbols fill the rows above them; `added` lists, for each
+        column 0 to 6, the new symbols top row first. Applied to the board before, it gives the board after. The tumble
+        that waters the whole land drops nothing: its `added` is empty and the round ends.
+      required: [clusters, win, cleared, canals, watered, met, added]
+      properties:
+        clusters:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [symbol, size, cells, win]
+            properties:
+              symbol: { type: integer, minimum: 0, maximum: 6 }
+              size: { type: integer, minimum: 5, maximum: 49 }
+              cells: { type: array, description: 'Where the cluster stood, wilds included, ascending.', items: { type: integer, minimum: 0, maximum: 48 } }
+              win: { type: integer, minimum: 1, description: "The cluster's pay for its size, before the board's `multiplier`." }
+        win: { type: integer, minimum: 1, description: "The clusters' pays added together, times the board's `multiplier`." }
+        cleared: { type: array, description: 'Every cell that went, ascending.', items: { type: integer, minimum: 0, maximum: 48 } }
+        canals: { type: array, description: "The round's canal cells after this tumble, ascending.", items: { type: integer, minimum: 0, maximum: 48 } }
+        watered: { type: array, description: 'The watered cells among `canals` after this tumble, ascending.', items: { type: integer, minimum: 0, maximum: 48 } }
+        met: { type: boolean, description: "One canal now touches both rivers." }
+        added:
+          type: array
+          description: Per column 0 to 6, the new symbol ids, top row first; empty for the tumble that watered the whole land.
+          maxItems: 7
+          items: { type: array, maxItems: 7, items: { type: integer, minimum: 0, maximum: 7 } }
+    CanalsBaseSpin:
+      description: The base spin of a base or ante round.
+      allOf:
+        - $ref: '#/components/schemas/CanalsBoard'
+        - type: object
+          required: [met, carried, win]
+          properties:
+            met: { type: boolean, description: "The canals joined the rivers; High water follows unless the whole land or `cap` ended the round." }
+            carried: { type: array, description: 'The canals High water starts with: those of the connected canals that joined both rivers, ascending; empty unless `met`.', items: { type: integer, minimum: 0, maximum: 48 } }
+            win: { type: integer, minimum: 0, description: "What the tumbles paid, at most `cap`; `cap` for the whole land." }
+    CanalsHighSpin:
+      description: One High water spin.
+      allOf:
+        - $ref: '#/components/schemas/CanalsBoard'
+        - type: object
+          required: [wateredBefore, step, spinsAdded, spinsLeft, win, total, capped, wholeLand]
+          properties:
+            wateredBefore: { type: integer, minimum: 0, maximum: 49, description: "The cells watered when this spin started; they set its `multiplier`." }
+            step: { type: integer, minimum: 0, description: "The index in the ladder of that multiplier." }
+            spinsAdded: { type: integer, minimum: 0, description: '`extraSpins` when the rivers first met in this spin (the first spin of `canal` and `flood`); otherwise 0.' }
+            spinsLeft: { type: integer, minimum: 0, description: "Spins left after this one; 0 on a spin that ended the round." }
+            win: { type: integer, minimum: 0, description: "This spin's win, at most what is left under `cap`." }
+            total: { type: integer, minimum: 0, description: "High water's win so far." }
+            capped: { type: boolean, description: "This spin reached `cap`; High water ends with it." }
+            wholeLand: { type: boolean, description: "All 49 cells are watered; the round pays `cap` and ends with this spin." }
     ErrorCode:
       type: string
       description: |
