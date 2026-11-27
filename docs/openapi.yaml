@@ -760,6 +760,11 @@ paths:
         `request_id` still gets its stored result.
         Weighted games: `mode` is `base` or absent; the wallet bet is `bet`. `force_outcome` is an index into the
         game's outcome table and works only for sandbox operators (otherwise `INVALID_REQUEST`).
+        `force_rollback: true` (sandbox operators only; any game) makes the round a rollback test: Polarkast sends the
+        wallet bet as usual and, once the wallet accepted it, rolls it back instead of playing. Your wallet settles a
+        real, signed `rollback` of that bet, nothing is debited, no round is kept and the `request_id` is free again.
+        The response is the error of a bet that did not complete (`INTERNAL_ERROR`, "rolled back"), as for any
+        rolled-back bet. It is `INVALID_REQUEST` for a non-sandbox operator, in a fun session and with `reward_id`.
         Hold-and-win games: `bet` is a play amount from the session's `bets` (otherwise `INVALID_REQUEST`) and `mode`
         is `base` (the default) or `buy`; the wallet bet is the round's `cost` (see Games). A base round at a play
         amount without pots gets their warm start first. The pots change in the same step that records the round, and
@@ -1409,6 +1414,9 @@ components:
           type: integer
           minimum: 0
           description: Sandbox operators and weighted games only. Index into the game's outcome table (the `stub` game has 0 to 4).
+        force_rollback:
+          type: boolean
+          description: Sandbox operators only, any game. Sends the bet, then rolls it back instead of playing (see Description). Refused with `reward_id` and in fun sessions.
         reward_id:
           $ref: '#/components/schemas/Id'
           description: Optional. Plays one free round of this reward, one of `/game/open`'s `rewards` (see Free rounds).
