@@ -8,6 +8,8 @@ A 5-reel, 3-row, 20-line slot with a hold-and-win feature, the Star Hoard. Coins
 ## What your wallet sees
 One bet and one win per round, like any game ([wallet.md](wallet.md)). The bet's `amount` is the round's cost: the play amount for a base round, 50 times it for a bought round. Your stake limits for the currency apply to that amount, so the game offers a bought round only at play amounts whose cost is within your maximum stake. The win's `amount` is the payout; 0 closes a losing round.
 
+The game supports free rounds ([freebets.md](freebets.md)). A player with a reward for it is offered its free rounds when the game opens and plays them before paid play, each a base round at the reward's `bet`; buying a round and changing the play amount wait until they are used. Your wallet sees no bet for a free round, only its win with `reward_id`.
+
 The dragons are the player's and carry from round to round. Polarkast keeps them per player, currency and play amount; they never expire and never touch your wallet. A bought round leaves them alone, and a bet that fails or is rolled back leaves them as they were. The first time a player uses a play amount, its dragons start part-way, where a long game typically stands.
 
 ## Play amounts
@@ -17,4 +19,4 @@ The game offers your minimum stake for the currency, then steps of 1, 2 and 5 up
 Launch it like any game ([launch.md](launch.md)); `game_url` serves the game, which talks only to Polarkast. For play money in your lobby, launch with `"mode": "fun"` (launch.md, Fun mode). `POST /v1/round` describes each round in `hold_and_win`: mode, play amount, cost, win split and the dragons before and after ([rounds.md](rounds.md)).
 
 ## Check
-In the sandbox, launch it for your test player, open `game_url` in a browser and play a base round and a bought round: each time your wallet's balance changes by exactly `-cost + payout`. Close the game and launch again at the same play amount: the dragons are where you left them. Without a browser: [sandbox.md](sandbox.md), step 6.
+In the sandbox, launch it for your test player, open `game_url` in a browser and play a base round and a bought round: each time your wallet's balance changes by exactly `-cost + payout`. Close the game and launch again at the same play amount: the dragons are where you left them. Create a reward of two free rounds for the game and launch it again: it offers them, and each moves your balance by its win alone. Without a browser: [sandbox.md](sandbox.md), step 6.
