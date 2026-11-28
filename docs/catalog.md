@@ -13,8 +13,8 @@ Sync it when you set up and then about once a day. The list changes when a game 
 
 ## Reading it
 - `enabled`: you can launch the game now. A game that is listed but not enabled for you, or switched off, has `enabled: false`; ask your Polarkast contact to enable it ([launch.md](launch.md)). A suspended operator is still answered, with every game `enabled: false`.
-- `stakes` and `bets`: one entry per currency enabled for you, with your minimum and maximum stake in minor units. For hold-and-win, pay-anywhere and canals games `bets` lists the play amounts a session in that currency offers, the same as `/game/open`; a free round's `bet` must be one of them.
-- `modes`: `base` first, then the game's other modes (`buy`, `ante`; for a canals game `ante`, `bonus`, `torrent`, `canal`, `flood`), each with its `cost_x100` (hundredths of the play amount) and its own `rtp`.
+- `stakes` and `bets`: one entry per currency enabled for you, with your minimum and maximum stake in minor units. For hold-and-win, pay-anywhere, canals and offers games `bets` lists the play amounts a session in that currency offers, the same as `/game/open`; a free round's `bet` must be one of them.
+- `modes`: `base` first, then the game's other modes (`buy`, `ante`; for a canals game `ante`, `bonus`, `torrent`, `canal`, `flood`; for an offers game `rare`, `ante`, `bonus`, `grand`), each with its `cost_x100` (hundredths of the play amount) and its own `rtp`.
 - RTP variants: a variant of a game is a game of its own, with its own `game_id` and `rtp`. Enable the one you want.
 - `end_date`: the game is being retired. It stays listed and playable through that day (UTC); after it, it is no longer listed and launches and new rounds are `NOT_AVAILABLE` (rounds already open still settle). Stop offering it to players before then.
 - `blocked_countries`: launches with one of these as `country` get `NOT_AVAILABLE`.

@@ -19,7 +19,7 @@ info:
       is written down and so a round can be played without the client, for example in the sandbox.
 
     ## Games
-    Every `game_id` belongs to one of four families.
+    Every `game_id` belongs to one of five families.
     - Weighted (`stub`, the sandbox's test game): a bet, then one outcome from the game's table.
     - Hold-and-win (`four-star-dragons`) and pay-anywhere (`nova-forge`): the player picks a play amount (`bet`) from
       the session's `bets` and a round `mode`. A `base` round costs the play amount. A `buy` round starts the game's
@@ -43,7 +43,8 @@ info:
       the play amount, and the same rules apply as for the games above: the wallet bet's `amount` is the round's cost,
       the stake limits apply to it, the win is a whole number of hundredths of the play amount (`script.win`) never
       above `cap`, and the wallet win's `amount` is `floor(bet * script.win / 100)`. `buy` in a canals game is
-      `INVALID_REQUEST`, as are `bonus`, `torrent`, `canal` and `flood` in any other game.
+      `INVALID_REQUEST`, as are `torrent`, `canal` and `flood` in any other game and `bonus` in a game that is not a canals
+      or offers game.
 
       Canals: nothing carries from round to round. The board is 7 by 7. Five or more of one paying symbol touching
       side to side are a cluster; it pays by its size, clears, and the symbols above fall and new ones drop in, until
@@ -55,6 +56,32 @@ info:
       one or three rows across as canals). Each High water spin's wins are multiplied by the level the watered
       cells set when it starts (`ladders`; `torrent` has its own ladder and `spins.torrent` spins). Watering all 49
       cells is the whole land: the round pays `cap` at once. A round never pays more than `cap`.
+
+    - Offers (`bloom-or-bust`): the same play amount and `base` round, with four more modes instead of `buy`. `rare`
+      is a trade at the play amount with fewer, higher offers and a longer climb; `ante` is a trade with a golden
+      seal on every board, costing `bet * costs.ante / 100`; `bonus` and `grand` start the Mania at once, from a
+      golden seal of a fixed bid (`fixed.bonus`, `fixed.grand`), and cost `bet * costs.bonus / 100` and
+      `bet * costs.grand / 100`. Every mode but `base` and `rare` is offered only at play amounts where its cost is a
+      whole number of minor units (`bet * costs.<mode>` a multiple of 100; with Bloom or Bust's costs: `ante` at
+      multiples of 100, `bonus` at multiples of 25, `grand` at multiples of 10), so that the round's return is the
+      game's at every play amount; a round in another mode at any other play amount is `INVALID_REQUEST`. `costs` is
+      in the game's display model (`/game/open`), in hundredths of the play amount, and the same rules apply as for
+      the games above: the wallet bet's `amount` is the round's cost, the stake limits apply to it, the win is a whole
+      number of hundredths of the play amount (`script.win`, a multiple of 10) never above `cap`, and the wallet
+      win's `amount` is `floor(bet * script.win / 100)`. `buy` in an offers game is `INVALID_REQUEST`, as are
+      `torrent`, `canal`, `flood`, `rare` and `grand` in any other game.
+
+      Offers: nothing carries from round to round and nothing is decided during one. There is no grid. A trade's
+      bid climbs from 1.00x (`100`, in hundredths) and breaks at a crash point drawn with the round; it may fail at
+      1.00x. The round also draws up to `maxOffers` (8) offers, each at a bid of at least 1.1x, all known before the
+      climb; an offer is signed when the bid reaches it (the crash point is at or above it), and the trade wins the
+      highest signed offer, rounded down to 0.1x. Some boards carry a golden seal at a drawn bid. It is not an offer
+      and pays nothing by itself; when the bid reaches it the Mania follows in the same round: the seal's bid is added
+      to the Mania's win, then `bubbles` (3) bubbles play. A bubble climbs from its start with its own offers above
+      it and its own crash point; its highest signed offer, rounded down to 0.1x, is added and becomes the next
+      bubble's start (a bubble that signs nothing adds nothing, and the next starts at the same bid). A crash point
+      at `cap`, in the trade or in a bubble, wins exactly `cap` and ends the round. A round never pays more than
+      `cap`.
 
       Pay-anywhere: nothing carries from round to round. A spin pays wherever enough of one symbol lands on its 6 by
       5 board, and its wins tumble out: they go, the rest fall, new symbols drop in, and the board pays again; a spin
@@ -79,7 +106,7 @@ info:
     precision, the games, the number of rounds, the bet of each round and an expiry. The operator chooses the
     `reward_id`; it is unique per operator, and creating the same reward again is safe (see Idempotency).
     - The bet must be a valid stake for every game of the reward, in `GET /v1/games` terms: within the currency's
-      `min` and `max` and, for a hold-and-win, pay-anywhere or canals game, one of its `bets`. The stake limits are checked
+      `min` and `max` and, for a hold-and-win, pay-anywhere, canals or offers game, one of its `bets`. The stake limits are checked
       when the reward is created; a later change to them does not affect a reward that exists.
     - The player plays the rounds in any of the reward's games, in a session of that player, currency and precision,
       until `expires_at`. `/game/open` lists the session's usable rewards and the game client plays one free round by
@@ -118,6 +145,7 @@ info:
       2.2 KiB, the largest 3 KiB).
     - A canals `/game/round` response has no fixed bound either (`maxTumbles` a spin, at most twice `spins` spins in
       High water), so a client accepts any size.
+    - An offers `/game/round` response is small: at most 8 offers a board and 3 bubbles, about 1 KiB at most.
     - A pay-anywhere `/game/round` response has no fixed bound short of the game's own (`maxTumbles` a spin,
       `maxFreeSpins` a feature), so a client accepts any size. Over 1,000,000 rounds of each mode, script included: a
       base or ante round 0.5 KiB (99% under 1.1 KiB, the largest seen about 17 KiB), a bought round 6 KiB (99% under
@@ -365,7 +393,13 @@ paths:
         started, spins added, the whole land, the cap reached) and how to replay it: the draws, in the order they were
         used, reproduce the round on the game and engine versions the page names; on a provably fair round, the
         revealed server seed, the client seed and the nonce reproduce the draws. Fun rounds are not recorded and are
-        never found. A free round (see Free rounds) has `reward_id`, no bet transaction, only its win, and a `cost` of 0.
+        never found.
+        An offers round has `offers` instead: its mode, play amount, the amount debited and the win split between the
+        trade and the Mania. Its page shows the same, the round's key moments (the golden seal reached, the Mania's
+        bubbles, the cap reached) and how to replay it: the draws, in the order they were used, reproduce the round on
+        the game and engine versions the page names; on a provably fair round, the revealed server seed, the client seed
+        and the nonce reproduce the draws. Fun rounds are not recorded and are never found.
+        A free round (see Free rounds) has `reward_id`, no bet transaction, only its win, and a `cost` of 0.
       parameters:
         - name: X-Operator-Id
           in: header
@@ -441,6 +475,20 @@ paths:
                       bet: 100
                       cost: 100
                       win_x100: { base: 4090, high: 200 }
+                offers:
+                  value:
+                    round_id: 3c9e5b17-8a40-4d26-b1f7-6e2d0a9c4b58
+                    game_id: bloom-or-bust
+                    round_url: 'https://play.polarkast.example/rounds/rt_c41e7a9b3d5f4082a6b8d0e2f4a61c37'
+                    expires_at: '2026-01-15T10:15:00.000Z'
+                    transactions:
+                      - { transaction_id: 0e5b7d19-3c8a-4f62-a1d4-9b6e2c8f0a73, kind: bet, amount: 100, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.120Z' }
+                      - { transaction_id: a7c3e951-4d08-4b2f-8e6a-1f9d5b3c7e20, kind: win, amount: 4910, currency: EUR, precision: 2, status: succeeded, created_at: '2026-01-15T10:00:00.290Z' }
+                    offers:
+                      mode: base
+                      bet: 100
+                      cost: 100
+                      win_x100: { trade: 900, mania: 4010 }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidSignature' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -456,7 +504,7 @@ paths:
         Lists every game Polarkast offers that has an RTP, whether or not it is enabled for this operator, ordered by
         `game_id`. Each RTP variant of a game is its own `game_id` with its own `rtp`. The RTP comes from the game's
         math, the same source its certification uses: a weighted game's from its outcome table, a hold-and-win,
-        pay-anywhere or canals game's from the verified simulation of each mode. A game without an RTP is not listed.
+        pay-anywhere, canals or offers game's from the verified simulation of each mode. A game without an RTP is not listed.
         `enabled` says whether this operator can launch the game now. `stakes` has one entry per currency enabled for
         the operator, with the limits `/v1/launch` and `/game/round` apply; a reward's `bet` must be valid in them (see
         Free rounds). A game being retired has an `end_date` while it is still listed.
@@ -643,13 +691,13 @@ paths:
         has its play-money balance instead). The optional `device` is recorded on the session; operators never send
         it, the game client does. The response carries the launch's `lobby_url` (the target of the game's home button)
         and the currency's `currency_symbol` when Polarkast has configured one.
-        For a hold-and-win, pay-anywhere or canals game it also carries what the client needs to draw the game without its
+        For a hold-and-win, pay-anywhere, canals or offers game it also carries what the client needs to draw the game without its
         engine: the display model (`game`), the play amounts this session may use (`bets`), the opening play amount
         (`bet`) and the operator's `stake_limits`, which apply to the amount a round debits; a hold-and-win game also
         carries the pots at the opening play amount (`pots`, warm-started if the player has never used it, see Games).
         A bought or ante round is possible at a play amount whose cost is at most `stake_limits.max`, and a pay-anywhere
-        ante round or a canals round in any mode but `base` only where its cost is a whole number of minor units (see
-        Games).
+        ante round or a canals or offers round in any mode but `base` (and an offers `rare` round) only where its cost
+        is a whole number of minor units (see Games).
         A money session also carries `rewards`: the player's rewards this session can play now (see Free rounds).
       security: []
       requestBody:
@@ -781,6 +829,31 @@ paths:
                     server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
                     client_seed: polarkast
                     next_nonce: 0
+                offers:
+                  value:
+                    game_session_id: b4d8f2a6-5e1c-4a39-9c70-d3e6a8b1f592
+                    player_id: player-42
+                    game_id: bloom-or-bust
+                    currency: EUR
+                    precision: 2
+                    balance: 100000
+                    currency_symbol: '€'
+                    game:
+                      kind: 'offers'
+                      id: 'bloom-or-bust'
+                      version: 1
+                      name: 'Bloom or Bust'
+                      bubbles: 3
+                      maxOffers: 8
+                      fixed: { bonus: 1500, grand: 5000 }
+                      cap: 2500000
+                      costs: { ante: 141, bonus: 11784, grand: 38610 }
+                    bets: [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]
+                    bet: 100
+                    stake_limits: { min: 10, max: 1000000 }
+                    server_seed_commitment: 4f0c7a9e1d3b5a6c8e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d
+                    client_seed: polarkast
+                    next_nonce: 0
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '403': { $ref: '#/components/responses/InvalidSession' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -858,6 +931,12 @@ paths:
         `script`: the base spin (none for a bought round), the canals a `canal` or `flood` round starts with, and
         High water's spins, each board with its tumbles, and the win split (`baseWin`, `highWin`).
         `force_outcome` is not available (`INVALID_REQUEST`).
+        Offers games: `bet` is a play amount from the session's `bets` (otherwise `INVALID_REQUEST`) and `mode` is
+        `base` (the default), `rare`, `ante`, `bonus` or `grand` (the last three only at play amounts where the cost is
+        a whole number of minor units, otherwise `INVALID_REQUEST`); the wallet bet is the round's `cost` (see Games),
+        and the stake limits apply to it. Nothing is kept between rounds. The response carries the round's `script`:
+        the trade (none for a bought round), the golden seal's bid, the Mania if it was reached, and the win split
+        (`tradeWin`, `maniaWin`). `force_outcome` is not available (`INVALID_REQUEST`).
         `ante` in any other game, and `buy` in a weighted game, is `INVALID_REQUEST`.
         Fun sessions: the same, against the session's play-money balance with no wallet call; more than the fun round
         rate limit is `RATE_LIMITED`. A `reward_id` in a fun session is `INVALID_REQUEST`.
@@ -880,6 +959,7 @@ paths:
               bought: { value: { game_session_id: 2c7d1e90-6a3b-4f58-8e21-9d0c4b7a5f13, request_id: r7, bet: 100, mode: buy } }
               ante: { value: { game_session_id: 6d2b9f41-0e7a-4c35-b8d1-3a9e5c7f0b24, request_id: r3, bet: 100, mode: ante } }
               canals_bonus: { value: { game_session_id: 7e3c0a52-1f68-4b94-8d27-c5a9e1b0f436, request_id: r5, bet: 100, mode: bonus } }
+              offers_grand: { value: { game_session_id: b4d8f2a6-5e1c-4a39-9c70-d3e6a8b1f592, request_id: r6, bet: 100, mode: grand } }
               free_round: { value: { game_session_id: 8e0f4a52-1c1b-4a53-9a55-0b6c1f2a7d10, request_id: r2, bet: 100, reward_id: welcome-42 } }
       responses:
         '200':
@@ -927,6 +1007,16 @@ paths:
                     payout: 4290
                     balance: 104190
                     script: {mode: 'base', base: {grid: [6, 1, 5, 1, 4, 2, 0, 3, 5, 5, 4, 6, 3, 0, 1, 5, 3, 2, 0, 4, 2, 3, 5, 5, 3, 5, 2, 6, 1, 5, 4, 6, 6, 4, 3, 5, 5, 5, 4, 1, 6, 6, 5, 2, 4, 4, 6, 6, 2], multiplier: 1, tumbles: [{clusters: [{symbol: 5, size: 11, cells: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], win: 4040}], win: 4040, cleared: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], canals: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], watered: [2, 8, 9, 15, 22, 23, 29, 35, 36, 37, 42], met: true, added: [[6], [5, 4], [6], [5, 3], [1], [0, 3, 1], [4]]}, {clusters: [{symbol: 3, size: 5, cells: [9, 16, 22, 23, 24], win: 50}], win: 50, cleared: [9, 16, 22, 23, 24], canals: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], watered: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], met: true, added: [[], [4], [3], [6, 1, 4], [], [], []]}], met: true, carried: [2, 8, 9, 15, 16, 22, 23, 24, 29, 35, 36, 37, 42], win: 4090}, start: [], highSpins: 10, high: [{grid: [0, 6, 7, 1, 3, 1, 3, 0, 3, 3, 6, 3, 4, 3, 3, 4, 2, 0, 0, 1, 3, 3, 6, 4, 5, 6, 4, 3, 4, 5, 6, 2, 4, 2, 1, 6, 5, 4, 2, 1, 6, 3, 3, 0, 0, 2, 4, 1, 5], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 9, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [3, 1, 6, 4, 5, 5, 6, 3, 1, 0, 0, 4, 5, 2, 6, 0, 1, 5, 4, 3, 0, 3, 3, 3, 6, 5, 4, 1, 4, 2, 6, 6, 0, 1, 0, 3, 0, 2, 5, 3, 0, 2, 1, 0, 6, 6, 1, 5, 6], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 8, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [0, 6, 3, 5, 3, 1, 3, 3, 2, 3, 3, 2, 0, 4, 2, 3, 0, 4, 3, 2, 0, 6, 6, 1, 5, 5, 6, 1, 7, 4, 2, 3, 5, 6, 3, 5, 2, 2, 0, 4, 0, 6, 6, 3, 3, 3, 1, 3, 6], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 7, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [2, 2, 0, 1, 1, 1, 5, 5, 1, 4, 0, 1, 3, 3, 6, 3, 4, 0, 5, 5, 3, 0, 7, 1, 0, 6, 3, 4, 0, 4, 0, 4, 3, 2, 3, 1, 1, 3, 5, 0, 0, 6, 6, 4, 1, 0, 6, 4, 3], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 6, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [6, 3, 3, 4, 1, 3, 5, 3, 0, 3, 3, 1, 0, 1, 3, 0, 5, 0, 2, 2, 3, 2, 2, 4, 3, 5, 3, 4, 4, 3, 4, 3, 5, 6, 3, 2, 4, 4, 1, 5, 3, 3, 3, 3, 6, 3, 0, 1, 2], multiplier: 2, tumbles: [], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 5, win: 0, total: 0, capped: false, wholeLand: false}, {grid: [3, 3, 0, 6, 3, 1, 1, 3, 3, 6, 3, 0, 6, 2, 3, 0, 1, 3, 0, 3, 0, 3, 1, 4, 4, 3, 1, 3, 1, 0, 7, 0, 3, 1, 1, 4, 5, 3, 1, 4, 5, 1, 1, 5, 3, 6, 3, 4, 3], multiplier: 2, tumbles: [{clusters: [{symbol: 3, size: 6, cells: [0, 1, 7, 8, 14, 21], win: 100}], win: 200, cleared: [0, 1, 7, 8, 14, 21], canals: [0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 22, 23, 24, 29, 35, 36, 37, 42], watered: [0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 22, 23, 24, 29, 35, 36, 37, 42], met: true, added: [[0, 6], [6, 3], [3], [3], [], [], []]}], wateredBefore: 13, step: 1, spinsAdded: 0, spinsLeft: 4, win: 200, total: 200, capped: false, wholeLand: false}, {grid: [5, 5, 4, 6, 3, 3, 2, 3, 0, 2, 0, 5, 4, 4, 1, 4, 6, 3, 3, 6, 7, 6, 0, 7, 6, 4, 2, 3, 5, 6, 5, 3, 2, 5, 6, 4, 2, 2, 4, 4, 7, 3, 6, 5, 1, 5, 2, 6, 3], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 3, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [4, 5, 1, 5, 5, 2, 3, 5, 0, 1, 0, 4, 4, 2, 1, 0, 0, 4, 1, 3, 2, 4, 0, 3, 1, 6, 4, 5, 1, 6, 3, 2, 6, 3, 6, 2, 2, 0, 3, 5, 6, 3, 1, 0, 3, 0, 6, 5, 5], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 2, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [0, 0, 6, 0, 5, 3, 6, 2, 3, 3, 0, 3, 1, 6, 4, 6, 4, 0, 1, 0, 4, 3, 2, 5, 2, 4, 5, 0, 4, 5, 2, 4, 2, 3, 3, 6, 3, 6, 1, 6, 0, 4, 0, 5, 3, 5, 4, 6, 4], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 1, win: 0, total: 200, capped: false, wholeLand: false}, {grid: [6, 3, 3, 1, 3, 2, 4, 1, 1, 4, 4, 0, 0, 6, 6, 2, 4, 5, 5, 4, 0, 6, 1, 4, 3, 4, 0, 3, 0, 4, 0, 2, 6, 2, 4, 3, 5, 1, 5, 3, 6, 0, 7, 6, 0, 4, 6, 2, 3], multiplier: 3, tumbles: [], wateredBefore: 18, step: 2, spinsAdded: 0, spinsLeft: 0, win: 0, total: 200, capped: false, wholeLand: false}], win: 4290, baseWin: 4090, highWin: 200, triggered: true, capped: false, wholeLand: false}
+                offers:
+                  summary: A base round whose bid reaches the golden seal at 12x and plays the Mania, which wins 40.1x
+                  value:
+                    round_id: 3c9e5b17-8a40-4d26-b1f7-6e2d0a9c4b58
+                    mode: base
+                    bet: 100
+                    cost: 100
+                    payout: 4910
+                    balance: 104810
+                    script: {mode: 'base', trade: {offers: [{bid: 110, signed: true}, {bid: 260, signed: true}, {bid: 900, signed: true}, {bid: 2100, signed: false}], crash: 1500, win: 900}, seal: 1200, mania: {opening: 1200, bubbles: [{start: 1200, offers: [{bid: 1330, signed: true}, {bid: 1900, signed: false}], crash: 1600, best: 1330, win: 1330}, {start: 1330, offers: [{bid: 1470, signed: false}, {bid: 2100, signed: false}], crash: 1400, best: 0, win: 0}, {start: 1330, offers: [{bid: 1480, signed: true}, {bid: 2800, signed: false}], crash: 1900, best: 1480, win: 1480}], win: 4010}, win: 4910, tradeWin: 900, maniaWin: 4010, triggered: true, capped: false}
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '402': { $ref: '#/components/responses/InsufficientFunds' }
         '403': { $ref: '#/components/responses/RoundForbidden' }
@@ -1261,6 +1351,7 @@ components:
         hold_and_win: { $ref: '#/components/schemas/HoldAndWinRound' }
         pay_anywhere: { $ref: '#/components/schemas/PayAnywhereRound' }
         canals: { $ref: '#/components/schemas/CanalsRound' }
+        offers: { $ref: '#/components/schemas/OffersRound' }
         reward_id:
           $ref: '#/components/schemas/Id'
           description: Present only for a free round (see Free rounds), which has no bet transaction.
@@ -1298,6 +1389,23 @@ components:
           properties:
             base: { type: integer, minimum: 0, description: 'The base spin; 0 for a bought round.' }
             high: { type: integer, minimum: 0, description: High water. }
+    OffersRound:
+      type: object
+      description: Offers rounds only; absent for other games.
+      required: [mode, bet, cost, win_x100]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited, the bet transaction's `amount`; 0 for a free round.
+        win_x100:
+          type: object
+          description: The win split, in hundredths of the play amount. The payout is `floor(bet * (trade + mania) / 100)`.
+          required: [trade, mania]
+          properties:
+            trade: { type: integer, minimum: 0, description: 'The trade; 0 for a bought round.' }
+            mania: { type: integer, minimum: 0, description: The Mania. }
     HoldAndWinRound:
       type: object
       description: Hold-and-win rounds only; absent for other games.
@@ -1457,15 +1565,16 @@ components:
             reward's, and the reward is neither cancelled nor expired and has rounds left. Soonest `expires_at` first.
           items: { $ref: '#/components/schemas/OpenReward' }
         game:
-          description: Hold-and-win, pay-anywhere and canals games only. The display model; `kind` tells the families apart.
+          description: Hold-and-win, pay-anywhere, canals and offers games only. The display model; `kind` tells the families apart.
           oneOf:
             - $ref: '#/components/schemas/HoldAndWinGame'
             - $ref: '#/components/schemas/PayAnywhereGame'
             - $ref: '#/components/schemas/CanalsGame'
+            - $ref: '#/components/schemas/OffersGame'
         bets:
           type: array
           description: |
-            Hold-and-win, pay-anywhere and canals games only. The play amounts this session may use, smallest first: the
+            Hold-and-win, pay-anywhere, canals and offers games only. The play amounts this session may use, smallest first: the
             operator's minimum stake for the currency, then every amount of 1, 2 or 5 times a power of ten minor units
             above it, up to the maximum stake, at most 16 amounts in all.
           minItems: 1
@@ -1473,13 +1582,13 @@ components:
           items: { $ref: '#/components/schemas/PositiveAmount' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: Hold-and-win, pay-anywhere and canals games only. The opening play amount, one of `bets`; the play amount of the player's last base or ante round in this game and currency when it is in `bets`, otherwise the smallest.
+          description: Hold-and-win, pay-anywhere, canals and offers games only. The opening play amount, one of `bets`; the play amount of the player's last base or ante round in this game and currency when it is in `bets`, otherwise the smallest.
         pots:
           $ref: '#/components/schemas/Pots'
           description: Hold-and-win only. The pots at the opening play amount.
         stake_limits:
           type: object
-          description: Hold-and-win, pay-anywhere and canals games only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
+          description: Hold-and-win, pay-anywhere, canals and offers games only. The operator's stake limits for the currency, in minor units. They apply to what a round debits (its `cost`).
           required: [min, max]
           properties:
             min: { $ref: '#/components/schemas/PositiveAmount' }
@@ -1516,10 +1625,10 @@ components:
         request_id: { type: string, description: 'Idempotency key, unique per game session.' }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: The stake of a weighted round; the play amount of a hold-and-win, pay-anywhere or canals round, which debits its `cost`.
+          description: The stake of a weighted round; the play amount of a hold-and-win, pay-anywhere, canals or offers round, which debits its `cost`.
         mode:
           $ref: '#/components/schemas/RoundMode'
-          description: Optional, default `base`. `buy` for hold-and-win and pay-anywhere games; `ante` for pay-anywhere and canals games; `bonus`, `torrent`, `canal` and `flood` for canals games only.
+          description: Optional, default `base`. `buy` for hold-and-win and pay-anywhere games; `ante` for pay-anywhere, canals and offers games; `bonus` for canals and offers games; `torrent`, `canal` and `flood` for canals games only; `rare` and `grand` for offers games only.
         force_outcome:
           type: integer
           minimum: 0
@@ -1531,12 +1640,13 @@ components:
           $ref: '#/components/schemas/Id'
           description: Optional. Plays one free round of this reward, one of `/game/open`'s `rewards` (see Free rounds).
     GameRoundResponse:
-      description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win`, `pay_anywhere` or `canals`). Their required fields differ, so a response matches only its own."
+      description: "The session's game says which one: a weighted game's, or the one for `/game/open`'s `game.kind` (`hold_and_win`, `pay_anywhere`, `canals` or `offers`). Their required fields differ, so a response matches only its own."
       anyOf:
         - $ref: '#/components/schemas/WeightedRoundResponse'
         - $ref: '#/components/schemas/HoldAndWinRoundResponse'
         - $ref: '#/components/schemas/PayAnywhereRoundResponse'
         - $ref: '#/components/schemas/CanalsRoundResponse'
+        - $ref: '#/components/schemas/OffersRoundResponse'
     WeightedRoundResponse:
       type: object
       required: [round_id, outcome_index, payout, balance]
@@ -1602,10 +1712,26 @@ components:
         balance: { $ref: '#/components/schemas/Amount' }
         script: { $ref: '#/components/schemas/CanalsScript' }
         reward: { $ref: '#/components/schemas/RoundReward' }
+    OffersRoundResponse:
+      type: object
+      required: [round_id, mode, bet, cost, payout, balance, script]
+      properties:
+        round_id: { type: string, description: 'For a fun round, an id for the client only: it is never recorded.' }
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        bet: { $ref: '#/components/schemas/PositiveAmount' }
+        cost:
+          $ref: '#/components/schemas/Amount'
+          description: The amount debited by the wallet bet; 0 for a free round.
+        payout:
+          $ref: '#/components/schemas/Amount'
+          description: The amount credited by the wallet win, `floor(bet * script.win / 100)`.
+        balance: { $ref: '#/components/schemas/Amount' }
+        script: { $ref: '#/components/schemas/OffersScript' }
+        reward: { $ref: '#/components/schemas/RoundReward' }
     RoundMode:
       type: string
-      enum: [base, ante, buy, bonus, torrent, canal, flood]
-      description: '`base` in every game; `buy` in hold-and-win and pay-anywhere games; `ante` in pay-anywhere and canals games; `bonus`, `torrent`, `canal` and `flood` in canals games (see Games).'
+      enum: [base, ante, buy, bonus, torrent, canal, flood, rare, grand]
+      description: '`base` in every game; `buy` in hold-and-win and pay-anywhere games; `ante` in pay-anywhere, canals and offers games; `bonus` in canals and offers games; `torrent`, `canal` and `flood` in canals games; `rare` and `grand` in offers games (see Games).'
     Pots:
       type: array
       description: The four pots' counts, in the order of the display model's `pots`; each from 0 to `potSize`, and a pot at `potSize` is full.
@@ -2042,7 +2168,7 @@ components:
         bets:
           type: array
           description: |
-            Hold-and-win, pay-anywhere and canals games only. The play amounts a session in this currency offers, as
+            Hold-and-win, pay-anywhere, canals and offers games only. The play amounts a session in this currency offers, as
             `/game/open`'s `bets`. A reward's `bet` for this game must be one of them.
           minItems: 1
           maxItems: 16
@@ -2068,7 +2194,7 @@ components:
         rounds: { type: integer, minimum: 1, maximum: 1000, description: The number of free rounds. }
         bet:
           $ref: '#/components/schemas/PositiveAmount'
-          description: The bet of each free round in minor units, a valid stake for every game (see Free rounds); a hold-and-win, pay-anywhere or canals round's play amount.
+          description: The bet of each free round in minor units, a valid stake for every game (see Free rounds); a hold-and-win, pay-anywhere, canals or offers round's play amount.
         expires_at:
           type: string
           format: date-time
@@ -2259,6 +2385,100 @@ components:
             total: { type: integer, minimum: 0, description: "High water's win so far." }
             capped: { type: boolean, description: "This spin reached `cap`; High water ends with it." }
             wholeLand: { type: boolean, description: "All 49 cells are watered; the round pays `cap` and ends with this spin." }
+    OffersGame:
+      type: object
+      description: |
+        Offers only. What the client draws and explains, without the engine: names, sizes and prices. Amounts (`fixed`,
+        `cap`, `costs`) are in hundredths of the play amount. It holds no weights or odds; the game's RTP is on its game
+        sheet. There is no grid.
+      required: [kind, id, version, name, bubbles, maxOffers, fixed, cap, costs]
+      properties:
+        kind: { type: string, const: offers }
+        id: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1, description: "The game's version; rounds record it." }
+        name: { type: string }
+        bubbles: { type: integer, minimum: 1, description: 'Bubbles the Mania plays (3).' }
+        maxOffers: { type: integer, minimum: 1, description: 'Most offers a board holds (8).' }
+        fixed:
+          type: object
+          description: "The golden seal's bid in the bought modes."
+          required: [bonus, grand]
+          properties:
+            bonus: { type: integer, minimum: 110 }
+            grand: { type: integer, minimum: 110 }
+        cap: { type: integer, minimum: 1, description: 'The most one round pays, trade and Mania together.' }
+        costs:
+          type: object
+          description: 'What each mode but `base` and `rare` (100) costs. A mode is offered only at play amounts where `bet * cost` is a multiple of 100 (see Games).'
+          required: [ante, bonus, grand]
+          properties:
+            ante: { type: integer, minimum: 1 }
+            bonus: { type: integer, minimum: 1 }
+            grand: { type: integer, minimum: 1 }
+    OffersScript:
+      type: object
+      description: |
+        One round, decided in full by the server; the client replays it as it is. Bids and amounts are in hundredths of
+        the play amount: 250 is 2.50x. Every win is a multiple of 10.
+      required: [mode, trade, seal, mania, win, tradeWin, maniaWin, triggered, capped]
+      properties:
+        mode: { $ref: '#/components/schemas/RoundMode' }
+        trade:
+          oneOf: [{ $ref: '#/components/schemas/OffersTrade' }, { type: 'null' }]
+          description: The trade; `null` for a bought round.
+        seal:
+          type: [integer, 'null']
+          description: "The golden seal's bid, or `null` when the board carries none. A bought round has its mode's fixed seal."
+        mania:
+          oneOf: [{ $ref: '#/components/schemas/OffersMania' }, { type: 'null' }]
+          description: The Mania; `null` when the bid did not reach the seal (or the cap ended the round first).
+        win: { type: integer, minimum: 0, description: '`tradeWin + maniaWin`, at most `cap`; `cap` when a crash point reached it.' }
+        tradeWin: { type: integer, minimum: 0, description: "The trade's `win`; 0 for a bought round." }
+        maniaWin: { type: integer, minimum: 0, description: "The Mania's `win`, held so the round stays within `cap`." }
+        triggered: { type: boolean, description: 'The Mania played: the bid reached the golden seal, or a bought round.' }
+        capped: { type: boolean, description: 'The round reached `cap`.' }
+    OffersOffer:
+      type: object
+      description: An offer on the board and whether the bid reached it.
+      required: [bid, signed]
+      properties:
+        bid: { type: integer, minimum: 110 }
+        signed: { type: boolean, description: 'The crash point is at or above `bid`.' }
+    OffersTrade:
+      type: object
+      required: [offers, crash, win]
+      properties:
+        offers:
+          type: array
+          description: The board's offers, rising; at most `maxOffers`.
+          maxItems: 8
+          items: { $ref: '#/components/schemas/OffersOffer' }
+        crash: { type: integer, minimum: 100, description: 'Where the bid breaks; 100 when it failed at 1.00x.' }
+        win: { type: integer, minimum: 0, description: 'The highest signed offer rounded down to 0.1x; `cap` when `crash` reached it.' }
+    OffersMania:
+      type: object
+      required: [opening, bubbles, win]
+      properties:
+        opening: { type: integer, minimum: 110, description: "The golden seal's bid, added to the Mania's win first." }
+        bubbles:
+          type: array
+          description: "The bubbles played, in order; fewer than `bubbles` when one reached `cap` or the sum did, none when the opening alone did."
+          maxItems: 3
+          items: { $ref: '#/components/schemas/OffersBubble' }
+        win: { type: integer, minimum: 0, description: "The opening and every bubble's `win` added, held so that with the trade's win the round stays within `cap`." }
+    OffersBubble:
+      type: object
+      required: [start, offers, crash, best, win]
+      properties:
+        start: { type: integer, minimum: 110, description: "Where the bubble climbs from: the opening, or the previous bubble's `win` when it added something." }
+        offers:
+          type: array
+          description: The bubble's offers, rising, each at least 1.1x `start`; at most `maxOffers`.
+          maxItems: 8
+          items: { $ref: '#/components/schemas/OffersOffer' }
+        crash: { type: integer, minimum: 100, description: "Where the bubble breaks, at least `start` and at most `cap`." }
+        best: { type: integer, minimum: 0, description: 'The highest signed offer; 0 when none.' }
+        win: { type: integer, minimum: 0, description: '`best` rounded down to 0.1x: what the bubble adds.' }
     ErrorCode:
       type: string
       description: |
